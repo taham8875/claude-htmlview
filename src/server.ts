@@ -1,13 +1,27 @@
 // src/server.ts
 import { join, resolve, sep } from "node:path";
-import { stat } from "node:fs/promises";
-import { defaultProjectsDir, listSessions, newestSession, findSession } from "./sessions";
+import { stat, realpath } from "node:fs/promises";
+import {
+  defaultProjectsDir,
+  listSessions,
+  newestSession,
+  findSession,
+  SESSION_ID_RE,
+} from "./sessions";
 import { search } from "./search";
 import { refreshCache } from "./searchcache";
 import { watchProjects } from "./watch";
 import { listArtifacts } from "./artifacts";
 
 const PUBLIC = resolve(join(import.meta.dir, "..", "public"));
+
+// Resolved once at module load, not per-request: PUBLIC itself can be reached
+// via a symlinked path in some checkouts (e.g. a symlinked repo clone), so
+// comparing a per-request *resolved* target against a lexical PUBLIC would be
+// comparing resolved-against-unresolved and could reject legitimate requests
+// or, worse, mis-contain them. Falls back to the lexical PUBLIC if it somehow
+// doesn't exist yet (e.g. a from-scratch checkout before public/ is created).
+const REAL_PUBLIC = await realpath(PUBLIC).catch(() => PUBLIC);
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -33,9 +47,6 @@ const htmlShell = () =>
 function isAppRoute(path: string): boolean {
   return path === "/" || path === "/search" || path === "/artifacts" || path.startsWith("/s/");
 }
-
-/** Same charset real session ids (UUIDs) use. Rejects traversal/glob-injection shapes early. */
-const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /** Query-param int, clamped into [min, max]; any non-finite/missing value falls back. */
 function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
@@ -157,9 +168,29 @@ export async function createServer(opts: ServerOptions = {}) {
       if (target !== PUBLIC && !target.startsWith(PUBLIC + sep)) {
         return new Response("forbidden", { status: 403 });
       }
+
+      // The lexical check above only defends against ".." / encoded-slash
+      // traversal in the *path string* — it says nothing about symlinks. A
+      // symlink physically located under public/ (e.g. public/evil -> /etc)
+      // passes that check because the LINK's path is contained, even though
+      // stat()/Bun.file() below follow it to a target that isn't. Resolve the
+      // real, symlink-free path and re-assert containment against the real
+      // (also symlink-free) PUBLIC before treating it as servable.
+      let realTarget: string;
       try {
-        const st = await stat(target);
-        if (st.isFile()) return new Response(Bun.file(target));
+        realTarget = await realpath(target);
+      } catch {
+        // Missing file, or a broken/dangling symlink — either way, 404
+        // rather than letting realpath's rejection propagate as a crash.
+        return new Response("not found", { status: 404 });
+      }
+      if (realTarget !== REAL_PUBLIC && !realTarget.startsWith(REAL_PUBLIC + sep)) {
+        return new Response("forbidden", { status: 403 });
+      }
+
+      try {
+        const st = await stat(realTarget);
+        if (st.isFile()) return new Response(Bun.file(realTarget));
       } catch {
         // not found, or unreadable — fall through to 404
       }

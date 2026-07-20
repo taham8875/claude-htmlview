@@ -134,8 +134,12 @@ export async function newestSession(
   return (await listSessions(projectsDir))[0] ?? null;
 }
 
-/** Only characters real session ids (UUIDs, or the test fixtures' "sess-a" style) ever use. */
-const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
+/**
+ * Only characters real session ids (UUIDs, or the test fixtures' "sess-a"
+ * style) ever use. Exported so server.ts validates against the same pattern
+ * rather than a second, independently-maintained copy that could drift.
+ */
+export const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Look up a single session without parsing the rest of the corpus.

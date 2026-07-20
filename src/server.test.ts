@@ -1,7 +1,7 @@
 // src/server.test.ts
 import { test, expect } from "bun:test";
 import { createServer } from "./server";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, unlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -126,7 +126,41 @@ test("a real static file under public/ is still served (positive control for the
   const r = await fetch(`${base}/index.html`);
   expect(r.status).toBe(200);
   expect(r.headers.get("content-type")).toContain("text/html");
+  const body = await r.text();
+  expect(body.length).toBeGreaterThan(0); // a real, non-empty asset — not just a 200 with no body
   server.stop();
+});
+
+test("a symlink placed inside public/ cannot be used to read a file outside it", async () => {
+  // The lexical containment check (target.startsWith(PUBLIC + sep)) passes
+  // trivially here: the *symlink's own path* is under public/. Only the
+  // resolved target — which stat()/Bun.file() follow — escapes. This is the
+  // gap realpath()-then-recheck exists to close; see server.ts.
+  //
+  // The symlink is created inside this repo's REAL public/ directory (the
+  // server always serves PUBLIC = <repo>/public, regardless of the fixture's
+  // projectsDir — see fixtureServer()), so it must be removed in `finally`
+  // no matter how the test exits.
+  const { server, base } = await fixtureServer();
+
+  const secretDir = await mkdtemp(join(tmpdir(), "htmlview-secret-"));
+  const secretFile = join(secretDir, "secret.txt");
+  const secretContents = `TOP-SECRET-${Math.random().toString(36).slice(2)}`;
+  await writeFile(secretFile, secretContents);
+
+  const linkPath = join("public", "escape-link-test");
+  await symlink(secretFile, linkPath);
+
+  try {
+    const r = await fetch(`${base}/escape-link-test`);
+    expect(r.status).not.toBe(200);
+    const text = await r.text();
+    expect(text).not.toContain(secretContents);
+  } finally {
+    await unlink(linkPath).catch(() => {});
+    await rm(secretDir, { recursive: true, force: true }).catch(() => {});
+    server.stop();
+  }
 });
 
 test("GET /api/session/:id rejects a traversal-shaped id without crashing", async () => {
