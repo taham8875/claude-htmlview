@@ -1,0 +1,7 @@
+{"type":"ai-title","aiTitle":"Check the font setup","sessionId":"fixture-basic"}
+{"type":"user","uuid":"u1","timestamp":"2026-07-20T10:00:00.000Z","isSidechain":false,"message":{"role":"user","content":"ما هي الخطوط المثبتة؟ check installed fonts"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-07-20T10:00:01.000Z","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":"They want the font list.","signature":"sig"},{"type":"text","text":"سأتحقق من الخطوط. Let me check."},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"fc-list","description":"list fonts"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-07-20T10:00:02.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Noto Sans Arabic\nIosevka NFM"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-07-20T10:00:03.000Z","isSidechain":false,"message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"Noto Sans Arabic مثبت بالفعل."}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-07-20T10:01:00.000Z","isSidechain":false,"message":{"role":"user","content":"شكرا thanks"}}
+{"type":"assistant","uuid":"a3","timestamp":"2026-07-20T10:01:01.000Z","isSidechain":false,"message":{"id":"msg_3","role":"assistant","content":[{"type":"text","text":"عفوا."}]}}
