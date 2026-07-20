@@ -63,7 +63,9 @@ The server never writes to `~/.claude/projects`, never modifies `settings.json`,
 |---|---|---|
 | `transcript.ts` | JSONL -> normalized turn objects (dedupe by `message.id`, group text/tool/thinking blocks) | nothing |
 | `index.ts` | scan projects dir; list sessions with title, project, mtime, turn count | `transcript.ts` |
-| `server.ts` | routes, SSE, static assets | both above |
+| `normalize.ts` | Arabic + Latin text normalization for search | nothing |
+| `search.ts` | maintain derived text cache; scan it for queries | `transcript.ts`, `normalize.ts` |
+| `server.ts` | routes, SSE, static assets | all above |
 | `app.js` (client) | markdown -> HTML, bidi rules, collapse, scroll-follow | vendored `marked.js` |
 
 `transcript.ts` holds the only non-trivial logic and is pure: JSONL in, objects out. Testable with no server and no browser.
@@ -109,6 +111,37 @@ Six rules, applied client-side after `marked.js` parses. Rules 1–3 address ess
 **`/live` — redirects to the most recently modified session.** The route to keep pinned: always shows the current working session, with no session IDs to bookmark or hunt for.
 
 **`/artifacts` — Artifact library.** Indexed from `~/.claude/htmlview/artifacts/`.
+
+**`/search?q=` — Full-text search across every session.** In v1, not deferred: with 146 sessions an mtime-sorted index is not sufficient to *find* anything, because recall is by content ("the session where I fixed the docmost import"), not by date.
+
+## Search
+
+### Derived text cache
+
+Scanning 149MB of raw JSONL per query is too slow, and holding an inverted index of it in memory is too heavy. Instead, maintain a **derived plain-text sidecar** per session at `~/.claude/htmlview/cache/<session-id>.txt`.
+
+Each line is `<turn-index>\t<role>\t<normalized text>`. Only user and assistant prose is extracted — tool inputs and outputs are excluded, since they are mostly file contents and would swamp results with noise. This reduces the searchable corpus to roughly 5–10% of the raw transcripts, small enough that a linear scan per query is effectively instant with no index structure and no dependencies.
+
+The cache is written by the same `fs.watch` loop that drives live updates, and is **derived state only** — deleting `~/.claude/htmlview/cache/` must be harmless, triggering a rebuild on next start. A cache entry is rebuilt when its source JSONL mtime is newer.
+
+### Arabic normalization
+
+Naive substring matching fails badly on Arabic, so both the indexed text and the query pass through the same normalization:
+
+- **Strip tashkeel** (diacritics `U+064B`–`U+0652`) — usually absent when typing, often present in written text.
+- **Unify alef forms** — `أ إ آ ٱ` -> `ا`.
+- **Unify taa marbuta** `ة` -> `ه`, and **alef maqsura** `ى` -> `ي`.
+- **Strip tatweel** (`U+0640`), a purely decorative elongation.
+- **Fold Arabic-Indic digits** `٠`–`٩` and `۰`–`۹` to ASCII `0`–`9`.
+- **Lowercase** for Latin.
+
+Normalization applies symmetrically to corpus and query, so typing `مشكله` matches `مُشْكِلَة`. Without this the search would be unusable for exactly the content that motivated the project.
+
+The **original text is retained** alongside the normalized form for snippet display — results show what was actually written, not the normalized version.
+
+### Results
+
+Grouped by session, newest first. Each hit shows project, session title, turn index, and a snippet with the match highlighted, linking to `/s/:id#turn-N` which scrolls to and flashes that turn. Snippets render with the same six bidi rules — a search result containing Arabic must be as readable as the thread view.
 
 ### Live updates
 
@@ -162,6 +195,8 @@ Built with the `tdd` skill. Parser first, since every other unit depends on its 
 
 - **Parser** — the real test surface, and pure. Fixture JSONL files hand-trimmed from real sessions -> asserted turn objects. Covers multi-block messages, `message.id` dedupe, tool_use/tool_result pairing, thinking blocks, and a truncated final line.
 - **Bidi rules** — golden tests: mixed Arabic/English markdown in, assert `dir` attributes and isolation land on the correct nodes. Run against a real browser via the Playwright MCP, since the point is real UBA behaviour rather than a simulated DOM.
+- **Normalization** — pure and table-driven, so tested exhaustively: each alef form, tashkeel stripping, taa marbuta, alef maqsura, tatweel, both Arabic-Indic digit ranges, and the symmetry property that `normalize(query)` matches `normalize(corpus)` for known equivalent pairs.
+- **Search** — over a fixture cache: substring hits, Arabic equivalence (`مشكله` matching `مُشْكِلَة`), snippet extraction with correct offsets into the *original* text, cache rebuild when source mtime is newer, and correct behaviour when the cache directory is deleted mid-run.
 - **Server** — integration: point at a fixture projects directory, `fetch` each route, assert shape.
 - **Not tested:** visual styling. Fonts and leading are judgment calls, iterated in the browser.
 
@@ -171,7 +206,8 @@ Not in v1. Listed so the decisions are not re-litigated.
 
 - **Interactive input from the browser.** Permitted (see below) and technically viable, but the terminal handles input fine and it roughly doubles the build. If added later, the sanctioned route is the Channels feature rather than shelling out to the CLI.
 - **Server-side markdown rendering.** Only needed to export a standalone rendered turn. Raw markdown is stored, so this is additive.
-- **Full-text search across sessions.** Likely the highest-value v2 addition given 146 sessions; deliberately cut from v1 to keep scope on the two stated problems.
+- **Search over tool inputs/outputs.** v1 searches user and assistant prose only. Including tool content would swamp results with file dumps; if wanted later, it is a scoped toggle over an extended cache format.
+- **Ranked search.** v1 is substring matching over normalized text, ordered by recency. Relevance ranking (BM25 or similar) is a v2 concern and would likely require a real index.
 
 ## Verified facts
 
@@ -197,5 +233,6 @@ Checked against official documentation on 2026-07-20, rather than assumed.
 | Stack | Bun + vendored `marked.js`, zero dependencies |
 | Ingestion | No hook — server tails transcripts directly |
 | Artifact trigger | A skill carrying the criteria |
+| Search | **v1**, over a derived text cache, with Arabic normalization |
 | Arabic fix | Six bidi rules client-side; Noto fonts already installed |
 | Location | `~/github/claude-htmlview` |
