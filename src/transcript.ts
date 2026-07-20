@@ -73,13 +73,13 @@ function userText(entry: any): string {
 export function parseTranscript(jsonl: string): Parsed {
   let title: string | null = null;
   const turns: Turn[] = [];
-  const seenMessageIds = new Set<string>();
   const pendingTools = new Map<string, { kind: "tool" } & Record<string, any>>();
 
   let current: Turn | null = null;
-  const startTurn = (text: string | null, ts: string | null) => {
+  const startTurn = (text: string | null, ts: string | null): Turn => {
     current = { index: turns.length, userText: text, blocks: [], timestamp: ts };
     turns.push(current);
+    return current;
   };
   /** Blocks arriving before any user message still need a home. */
   const ensureTurn = (ts: string | null) => {
@@ -126,18 +126,25 @@ export function parseTranscript(jsonl: string): Parsed {
         }
       }
       if (isHumanMessage(entry)) {
-        startTurn(userText(entry), entry.timestamp ?? null);
+        const turn = startTurn(userText(entry), entry.timestamp ?? null);
+        // A pasted screenshot must be visible as *something*. 88 real user
+        // image blocks across 20 sessions; base64 never carried forward.
+        if (Array.isArray(content)) {
+          for (const b of content) {
+            if (b?.type === "image") turn.blocks.push({ kind: "image" });
+          }
+        }
       }
       continue;
     }
 
     // type === "assistant"
+    //
+    // Do NOT dedupe by message.id. One streamed message is written across
+    // several lines under a single id, each carrying the next content block.
+    // Verified: 6388 id-repeats carry differing content, zero carry identical
+    // content. Keep-first dedupe discarded ~83% of all assistant blocks.
     const msg = entry.message;
-    const msgId = msg?.id;
-    if (typeof msgId === "string") {
-      if (seenMessageIds.has(msgId)) continue; // duplicate emission of the same message
-      seenMessageIds.add(msgId);
-    }
     const turn = ensureTurn(entry.timestamp ?? null);
     const blocks = Array.isArray(msg?.content) ? msg.content : [];
     for (const b of blocks) {

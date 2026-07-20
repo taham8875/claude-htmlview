@@ -61,12 +61,17 @@ test("ignores harness-injected string content", async () => {
   expect(all).toContain("real question");
 });
 
-test("deduplicates assistant blocks sharing a message id", async () => {
+test("concatenates blocks across entries sharing a message id", async () => {
+  // Verified against the real corpus: one streamed message is split across
+  // several JSONL lines under one message.id, each carrying the NEXT block.
+  // 6388 such repeats carry differing content; zero carry identical content.
+  // Deduping here discarded ~83% of all assistant blocks.
   const p = await load("edge");
-  const texts = p.turns[0].blocks.filter(
-    (b) => b.kind === "text" && (b as any).text === "part one"
-  );
-  expect(texts.length).toBe(1);
+  const kinds = p.turns[0].blocks.map((b) => b.kind);
+  expect(kinds).toContain("thinking");
+  expect(kinds).toContain("text");
+  const texts = p.turns[0].blocks.filter((b) => b.kind === "text") as any[];
+  expect(texts.map((t) => t.text)).toEqual(["part one", "part two"]);
 });
 
 test("handles array-valued tool_result content", async () => {
@@ -77,10 +82,18 @@ test("handles array-valued tool_result content", async () => {
   expect(tool.result).toContain("file body");
 });
 
-test("represents images without base64 payload", async () => {
+test("represents a user-submitted image as a placeholder block", async () => {
+  // 88 real user image blocks across 20 sessions — a pasted screenshot must be
+  // visible as *something*, not silently dropped.
   const p = await load("edge");
-  const json = JSON.stringify(p);
-  expect(json).not.toContain("iVBORw0KGgo");
+  const turn = p.turns.find((t) => t.userText?.includes("real question"));
+  expect(turn).toBeDefined();
+  expect(turn!.blocks.some((b) => b.kind === "image")).toBe(true);
+});
+
+test("never carries base64 payload into parser output", async () => {
+  const p = await load("edge");
+  expect(JSON.stringify(p)).not.toContain("iVBORw0KGgo");
 });
 
 test("surfaces unknown entry types as placeholders", async () => {
