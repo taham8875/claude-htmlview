@@ -11,7 +11,7 @@ import {
 import { search } from "./search";
 import { refreshCache } from "./searchcache";
 import { watchProjects } from "./watch";
-import { listArtifacts } from "./artifacts";
+import { listArtifacts, artifactsDir } from "./artifacts";
 
 const PUBLIC = resolve(join(import.meta.dir, "..", "public"));
 
@@ -144,6 +144,62 @@ export async function createServer(opts: ServerOptions = {}) {
       if (path.startsWith("/api/")) return json({ error: "not found" }, 404);
 
       if (isAppRoute(path)) return htmlShell();
+
+      // Artifact library: serves files written by the htmlview-artifact
+      // skill from artifactsDir() (~/.claude/htmlview/artifacts by default,
+      // overridable for tests). This is arbitrary-file-serving from a
+      // user-writable directory -- the exact shape of the symlink-escape
+      // exploit Task 9 found in the static route below, so it gets the same
+      // three-step treatment: decode before containment-checking (encoded
+      // traversal survives literal-".." checks), lexically contain the
+      // decoded target, then realpath()-contain the *resolved* target since
+      // stat()/Bun.file() follow symlinks past the lexical check. Unlike
+      // PUBLIC, artifactsDir() is resolved per-request rather than cached at
+      // module load: it's overridable per-test via HTMLVIEW_ARTIFACTS_DIR
+      // and may not exist yet at server startup (no artifacts written).
+      if (path.startsWith("/artifact/")) {
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(path.slice("/artifact/".length));
+        } catch {
+          return new Response("bad request", { status: 400 });
+        }
+        // Reject traversal and absolute-path escapes on the *decoded*
+        // string, before any filesystem access.
+        if (decoded.includes("..") || decoded.startsWith("/")) {
+          return new Response("forbidden", { status: 403 });
+        }
+
+        const dir = artifactsDir();
+        const target = resolve(dir, decoded);
+        if (target !== dir && !target.startsWith(dir + sep)) {
+          return new Response("forbidden", { status: 403 });
+        }
+
+        let realTarget: string;
+        try {
+          realTarget = await realpath(target);
+        } catch {
+          // Missing file, or a broken/dangling symlink -- 404 either way.
+          return new Response("not found", { status: 404 });
+        }
+        const realDir = await realpath(dir).catch(() => dir);
+        if (realTarget !== realDir && !realTarget.startsWith(realDir + sep)) {
+          return new Response("forbidden", { status: 403 });
+        }
+
+        try {
+          const st = await stat(realTarget);
+          if (st.isFile()) {
+            return new Response(Bun.file(realTarget), {
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+        } catch {
+          // not found, or unreadable -- fall through to 404
+        }
+        return new Response("not found", { status: 404 });
+      }
 
       // Static assets from public/.
       //
