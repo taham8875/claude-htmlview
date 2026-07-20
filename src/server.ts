@@ -9,7 +9,7 @@ import {
   SESSION_ID_RE,
 } from "./sessions";
 import { search } from "./search";
-import { refreshCache } from "./searchcache";
+import { refreshCache, buildCacheEntry } from "./searchcache";
 import { watchProjects } from "./watch";
 import { listArtifacts, artifactsDir } from "./artifacts";
 
@@ -58,203 +58,278 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
 
 export type ServerOptions = { projectsDir?: string; port?: number };
 
+/** True for the specific error Bun.serve() throws synchronously when the requested port is taken. */
+function isPortInUse(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "EADDRINUSE";
+}
+
+/**
+ * Bun.serve() throws synchronously (not a rejected promise) with `err.code
+ * === "EADDRINUSE"` when the requested port is taken — verified empirically.
+ * Retry on the next port up, `maxAttempts` times, rather than letting a
+ * second instance crash with a raw stack trace. `port: 0` (the test seam
+ * meaning "any free port", already relied on by every *.test.ts fixture)
+ * can't conflict, so it's tried exactly once and never bumped.
+ */
+function bindWithFallback(
+  fetch: (req: Request) => Response | Promise<Response>,
+  requestedPort: number,
+  maxAttempts = 20
+): ReturnType<typeof Bun.serve> {
+  if (requestedPort === 0) {
+    return Bun.serve({ hostname: "127.0.0.1", port: 0, fetch });
+  }
+  let lastErr: unknown;
+  for (let i = 0; i < maxAttempts; i++) {
+    const port = requestedPort + i;
+    try {
+      return Bun.serve({ hostname: "127.0.0.1", port, fetch }); // never 0.0.0.0 — transcripts can contain file contents and secrets
+    } catch (err) {
+      if (!isPortInUse(err)) throw err;
+      lastErr = err;
+    }
+  }
+  throw new Error(
+    `Could not bind any port in [${requestedPort}, ${requestedPort + maxAttempts - 1}]: ${lastErr}`
+  );
+}
+
 export async function createServer(opts: ServerOptions = {}) {
   const projectsDir = opts.projectsDir ?? defaultProjectsDir();
   const clients = new Set<(sessionId: string) => void>();
 
-  const server = Bun.serve({
-    hostname: "127.0.0.1", // never 0.0.0.0 — transcripts can contain file contents and secrets
-    port: opts.port ?? 7317,
-    async fetch(req) {
-      const url = new URL(req.url);
-      const path = url.pathname;
+  const server = bindWithFallback(async function fetch(req) {
+    const url = new URL(req.url);
+    const path = url.pathname;
 
-      if (path === "/api/sessions") return json(await listSessions(projectsDir));
+    if (path === "/api/sessions") return json(await listSessions(projectsDir));
 
-      if (path.startsWith("/api/session/")) {
-        const raw = path.slice("/api/session/".length);
-        let id: string;
-        try {
-          id = decodeURIComponent(raw);
-        } catch {
-          return json({ error: "bad id" }, 400);
-        }
-        if (!SESSION_ID_RE.test(id)) return json({ error: "not found" }, 404);
-
-        const found = await findSession(id, projectsDir);
-        if (!found) return json({ error: "not found" }, 404);
-        const { meta, turns } = found;
-
-        const limit = clampInt(url.searchParams.get("limit"), 50, 1, 500);
-        const before = clampInt(url.searchParams.get("before"), turns.length, 0, turns.length);
-        const start = Math.max(0, before - limit);
-        return json({ meta, turns: turns.slice(start, before), hasMore: start > 0 });
+    if (path.startsWith("/api/session/")) {
+      const raw = path.slice("/api/session/".length);
+      let id: string;
+      try {
+        id = decodeURIComponent(raw);
+      } catch {
+        return json({ error: "bad id" }, 400);
       }
+      if (!SESSION_ID_RE.test(id)) return json({ error: "not found" }, 404);
 
-      if (path === "/api/search") {
-        return json(await search(url.searchParams.get("q") ?? "", projectsDir));
-      }
+      const found = await findSession(id, projectsDir);
+      if (!found) return json({ error: "not found" }, 404);
+      const { meta, turns } = found;
 
-      if (path === "/api/artifacts") return json(await listArtifacts());
+      const limit = clampInt(url.searchParams.get("limit"), 50, 1, 500);
+      const before = clampInt(url.searchParams.get("before"), turns.length, 0, turns.length);
+      const start = Math.max(0, before - limit);
+      return json({ meta, turns: turns.slice(start, before), hasMore: start > 0 });
+    }
 
-      if (path === "/events") {
-        let send: ((sessionId: string) => void) | null = null;
-        const stream = new ReadableStream({
-          start(controller) {
-            send = (sessionId: string) =>
-              controller.enqueue(`data: ${JSON.stringify({ sessionId })}\n\n`);
-            clients.add(send);
-            controller.enqueue(": connected\n\n");
-            // The primary cleanup path: fires promptly when the client
-            // actually closes the connection (page navigation, tab close,
-            // EventSource.close()). Verified this fires within ~1ms of a
-            // real disconnect (AbortController.abort() on the fetch).
-            req.signal.addEventListener("abort", () => {
-              if (send) clients.delete(send);
-              try {
-                controller.close();
-              } catch {}
-            });
-          },
-          // Belt-and-suspenders: fires when the stream's reader is cancelled
-          // directly. Measured this can lag well behind the abort event for
-          // a reader-only cancel (no socket teardown) — see report — so it's
-          // not the primary signal, but costs nothing to also handle.
-          cancel() {
+    if (path === "/api/search") {
+      return json(await search(url.searchParams.get("q") ?? "", projectsDir));
+    }
+
+    if (path === "/api/artifacts") return json(await listArtifacts());
+
+    if (path === "/events") {
+      let send: ((sessionId: string) => void) | null = null;
+      const stream = new ReadableStream({
+        start(controller) {
+          send = (sessionId: string) =>
+            controller.enqueue(`data: ${JSON.stringify({ sessionId })}\n\n`);
+          clients.add(send);
+          controller.enqueue(": connected\n\n");
+          // The primary cleanup path: fires promptly when the client
+          // actually closes the connection (page navigation, tab close,
+          // EventSource.close()). Verified this fires within ~1ms of a
+          // real disconnect (AbortController.abort() on the fetch).
+          req.signal.addEventListener("abort", () => {
             if (send) clients.delete(send);
-          },
-        });
-        return new Response(stream, {
-          headers: {
-            "content-type": "text/event-stream",
-            "cache-control": "no-cache",
-            connection: "keep-alive",
-          },
-        });
-      }
+            try {
+              controller.close();
+            } catch {}
+          });
+        },
+        // Belt-and-suspenders: fires when the stream's reader is cancelled
+        // directly. Measured this can lag well behind the abort event for
+        // a reader-only cancel (no socket teardown) — see report — so it's
+        // not the primary signal, but costs nothing to also handle.
+        cancel() {
+          if (send) clients.delete(send);
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        },
+      });
+    }
 
-      if (path === "/live") {
-        const newest = await newestSession(projectsDir);
-        return new Response(null, {
-          status: 302,
-          headers: { location: newest ? `/s/${newest.id}` : "/" },
-        });
-      }
+    if (path === "/live") {
+      const newest = await newestSession(projectsDir);
+      return new Response(null, {
+        status: 302,
+        headers: { location: newest ? `/s/${newest.id}` : "/" },
+      });
+    }
 
-      if (path.startsWith("/api/")) return json({ error: "not found" }, 404);
+    if (path.startsWith("/api/")) return json({ error: "not found" }, 404);
 
-      if (isAppRoute(path)) return htmlShell();
+    if (isAppRoute(path)) return htmlShell();
 
-      // Artifact library: serves files written by the htmlview-artifact
-      // skill from artifactsDir() (~/.claude/htmlview/artifacts by default,
-      // overridable for tests). This is arbitrary-file-serving from a
-      // user-writable directory -- the exact shape of the symlink-escape
-      // exploit Task 9 found in the static route below, so it gets the same
-      // three-step treatment: decode before containment-checking (encoded
-      // traversal survives literal-".." checks), lexically contain the
-      // decoded target, then realpath()-contain the *resolved* target since
-      // stat()/Bun.file() follow symlinks past the lexical check. Unlike
-      // PUBLIC, artifactsDir() is resolved per-request rather than cached at
-      // module load: it's overridable per-test via HTMLVIEW_ARTIFACTS_DIR
-      // and may not exist yet at server startup (no artifacts written).
-      if (path.startsWith("/artifact/")) {
-        let decoded: string;
-        try {
-          decoded = decodeURIComponent(path.slice("/artifact/".length));
-        } catch {
-          return new Response("bad request", { status: 400 });
-        }
-        // Reject traversal and absolute-path escapes on the *decoded*
-        // string, before any filesystem access.
-        if (decoded.includes("..") || decoded.startsWith("/")) {
-          return new Response("forbidden", { status: 403 });
-        }
-
-        const dir = artifactsDir();
-        const target = resolve(dir, decoded);
-        if (target !== dir && !target.startsWith(dir + sep)) {
-          return new Response("forbidden", { status: 403 });
-        }
-
-        let realTarget: string;
-        try {
-          realTarget = await realpath(target);
-        } catch {
-          // Missing file, or a broken/dangling symlink -- 404 either way.
-          return new Response("not found", { status: 404 });
-        }
-        const realDir = await realpath(dir).catch(() => dir);
-        if (realTarget !== realDir && !realTarget.startsWith(realDir + sep)) {
-          return new Response("forbidden", { status: 403 });
-        }
-
-        try {
-          const st = await stat(realTarget);
-          if (st.isFile()) {
-            return new Response(Bun.file(realTarget), {
-              headers: { "content-type": "text/html; charset=utf-8" },
-            });
-          }
-        } catch {
-          // not found, or unreadable -- fall through to 404
-        }
-        return new Response("not found", { status: 404 });
-      }
-
-      // Static assets from public/.
-      //
-      // Decode BEFORE containment-checking, not after: a check performed on
-      // the still-encoded pathname (e.g. rejecting a literal "..") can be
-      // bypassed by percent-encoded traversal sequences (e.g. "%2e%2e", or
-      // "%2f" hiding a literal ".." behind an encoded slash) that only
-      // become actual ".." / "/" once decoded. Decoding first and then
-      // containing the *result* closes that gap regardless of encoding.
-      //
-      // Note new URL() already collapses literal ".." segments in most
-      // cases (verified empirically), which is why a naive `.includes("..")`
-      // guard on the raw pathname looks like it works in casual testing but
-      // doesn't defend against the encoded-slash case above.
+    // Artifact library: serves files written by the htmlview-artifact
+    // skill from artifactsDir() (~/.claude/htmlview/artifacts by default,
+    // overridable for tests). This is arbitrary-file-serving from a
+    // user-writable directory -- the exact shape of the symlink-escape
+    // exploit Task 9 found in the static route below, so it gets the same
+    // three-step treatment: decode before containment-checking (encoded
+    // traversal survives literal-".." checks), lexically contain the
+    // decoded target, then realpath()-contain the *resolved* target since
+    // stat()/Bun.file() follow symlinks past the lexical check. Unlike
+    // PUBLIC, artifactsDir() is resolved per-request rather than cached at
+    // module load: it's overridable per-test via HTMLVIEW_ARTIFACTS_DIR
+    // and may not exist yet at server startup (no artifacts written).
+    if (path.startsWith("/artifact/")) {
       let decoded: string;
       try {
-        decoded = decodeURIComponent(path);
+        decoded = decodeURIComponent(path.slice("/artifact/".length));
       } catch {
         return new Response("bad request", { status: 400 });
       }
-      const target = resolve(PUBLIC, decoded.replace(/^\/+/, ""));
-      if (target !== PUBLIC && !target.startsWith(PUBLIC + sep)) {
+      // Reject traversal and absolute-path escapes on the *decoded*
+      // string, before any filesystem access.
+      if (decoded.includes("..") || decoded.startsWith("/")) {
         return new Response("forbidden", { status: 403 });
       }
 
-      // The lexical check above only defends against ".." / encoded-slash
-      // traversal in the *path string* — it says nothing about symlinks. A
-      // symlink physically located under public/ (e.g. public/evil -> /etc)
-      // passes that check because the LINK's path is contained, even though
-      // stat()/Bun.file() below follow it to a target that isn't. Resolve the
-      // real, symlink-free path and re-assert containment against the real
-      // (also symlink-free) PUBLIC before treating it as servable.
+      const dir = artifactsDir();
+      const target = resolve(dir, decoded);
+      if (target !== dir && !target.startsWith(dir + sep)) {
+        return new Response("forbidden", { status: 403 });
+      }
+
       let realTarget: string;
       try {
         realTarget = await realpath(target);
       } catch {
-        // Missing file, or a broken/dangling symlink — either way, 404
-        // rather than letting realpath's rejection propagate as a crash.
+        // Missing file, or a broken/dangling symlink -- 404 either way.
         return new Response("not found", { status: 404 });
       }
-      if (realTarget !== REAL_PUBLIC && !realTarget.startsWith(REAL_PUBLIC + sep)) {
+      const realDir = await realpath(dir).catch(() => dir);
+      if (realTarget !== realDir && !realTarget.startsWith(realDir + sep)) {
         return new Response("forbidden", { status: 403 });
       }
 
       try {
         const st = await stat(realTarget);
-        if (st.isFile()) return new Response(Bun.file(realTarget));
+        if (st.isFile()) {
+          return new Response(Bun.file(realTarget), {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
       } catch {
-        // not found, or unreadable — fall through to 404
+        // not found, or unreadable -- fall through to 404
       }
       return new Response("not found", { status: 404 });
-    },
-  });
+    }
+
+    // Static assets from public/.
+    //
+    // Decode BEFORE containment-checking, not after: a check performed on
+    // the still-encoded pathname (e.g. rejecting a literal "..") can be
+    // bypassed by percent-encoded traversal sequences (e.g. "%2e%2e", or
+    // "%2f" hiding a literal ".." behind an encoded slash) that only
+    // become actual ".." / "/" once decoded. Decoding first and then
+    // containing the *result* closes that gap regardless of encoding.
+    //
+    // Note new URL() already collapses literal ".." segments in most
+    // cases (verified empirically), which is why a naive `.includes("..")`
+    // guard on the raw pathname looks like it works in casual testing but
+    // doesn't defend against the encoded-slash case above.
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(path);
+    } catch {
+      return new Response("bad request", { status: 400 });
+    }
+    const target = resolve(PUBLIC, decoded.replace(/^\/+/, ""));
+    if (target !== PUBLIC && !target.startsWith(PUBLIC + sep)) {
+      return new Response("forbidden", { status: 403 });
+    }
+
+    // The lexical check above only defends against ".." / encoded-slash
+    // traversal in the *path string* — it says nothing about symlinks. A
+    // symlink physically located under public/ (e.g. public/evil -> /etc)
+    // passes that check because the LINK's path is contained, even though
+    // stat()/Bun.file() below follow it to a target that isn't. Resolve the
+    // real, symlink-free path and re-assert containment against the real
+    // (also symlink-free) PUBLIC before treating it as servable.
+    let realTarget: string;
+    try {
+      realTarget = await realpath(target);
+    } catch {
+      // Missing file, or a broken/dangling symlink — either way, 404
+      // rather than letting realpath's rejection propagate as a crash.
+      return new Response("not found", { status: 404 });
+    }
+    if (realTarget !== REAL_PUBLIC && !realTarget.startsWith(REAL_PUBLIC + sep)) {
+      return new Response("forbidden", { status: 403 });
+    }
+
+    try {
+      const st = await stat(realTarget);
+      if (st.isFile()) return new Response(Bun.file(realTarget));
+    } catch {
+      // not found, or unreadable — fall through to 404
+    }
+    return new Response("not found", { status: 404 });
+  }, opts.port ?? 7317);
+
+  const rebuilding = new Set<string>(); // sessions with a rebuild in flight
+  const rebuildAgain = new Set<string>(); // sessions that changed again mid-rebuild
+
+  /**
+   * Rebuild the search cache entry for one session. Fire-and-forget from the
+   * watcher callback below: search() must never keep serving stale (or
+   * silently empty) results for a session the server has been watching all
+   * along -- see finding 1's report. findSession() parses only this one
+   * file rather than the whole corpus (listSessions() would), which matters
+   * because sessions in this corpus run up to ~57MB.
+   *
+   * Never let a rebuild crash the watcher callback or block the SSE
+   * broadcast that fires alongside it -- both would turn a slow/missing
+   * cache write into a broken live-update feed too.
+   *
+   * A single huge, actively-written session can otherwise pile up
+   * concurrent rebuilds of itself: measured ~190ms to rebuild the cache
+   * entry for a real 56MB transcript, and the watcher's debounce (120ms)
+   * means a continuously-active session can re-fire faster than that. The
+   * in-flight guard collapses any events that land *during* a rebuild into
+   * one follow-up rebuild afterward, rather than running them concurrently.
+   */
+  async function rebuildCacheFor(sessionId: string): Promise<void> {
+    if (rebuilding.has(sessionId)) {
+      rebuildAgain.add(sessionId);
+      return;
+    }
+    rebuilding.add(sessionId);
+    try {
+      const found = await findSession(sessionId, projectsDir);
+      if (found) await buildCacheEntry(found.meta);
+    } catch {
+      // Source vanished mid-rebuild, or a transient read error -- the next
+      // watch event retries. Never propagate: this must not crash the
+      // fire-and-forget caller.
+    } finally {
+      rebuilding.delete(sessionId);
+      if (rebuildAgain.delete(sessionId)) void rebuildCacheFor(sessionId);
+    }
+  }
 
   const watcher = await watchProjects(projectsDir, (sessionId) => {
+    void rebuildCacheFor(sessionId); // never awaited -- must not delay the SSE broadcast below
+
     for (const send of clients) {
       try {
         send(sessionId);

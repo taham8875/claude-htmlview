@@ -23,11 +23,23 @@ export const artifactsDir = () =>
 
 export async function listArtifacts(): Promise<Artifact[]> {
   const out: Artifact[] = [];
+  let files: string[] = [];
   try {
     for await (const file of new Glob("*/*.html").scan({
       cwd: artifactsDir(),
       absolute: true,
     })) {
+      files.push(file);
+    }
+  } catch {
+    return []; // no artifacts dir yet, or unreadable
+  }
+
+  // Mirrors listSessions()'s convention (src/sessions.ts): per-file try/continue
+  // rather than one try around the whole loop. One artifact deleted mid-scan
+  // (stat() throws ENOENT) must drop that one row, not empty the whole library.
+  for (const file of files) {
+    try {
       const dirName = basename(dirname(file));
       out.push({
         name: basename(file, ".html"),
@@ -36,9 +48,9 @@ export async function listArtifacts(): Promise<Artifact[]> {
         file,
         mtimeMs: (await stat(file)).mtimeMs,
       });
+    } catch {
+      continue; // deleted mid-scan, or unreadable — drop from the list, never crash
     }
-  } catch {
-    return []; // no artifacts dir yet, or unreadable
   }
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }

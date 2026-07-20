@@ -50,6 +50,39 @@ test("lists an artifact with decoded project and href", async () => {
   expect(out[0]!.href).toBe("/artifact/-home-taha-github-demo/chart.html");
 });
 
+test("a file deleted mid-scan drops only that row, not the whole list", async () => {
+  // Mirrors listSessions()'s per-file try/continue convention (src/sessions.ts):
+  // one bad file must not empty the entire library. Regression test for the
+  // earlier version of listArtifacts(), which wrapped the whole loop --
+  // including the per-file stat() -- in one try that returned [] on any
+  // single failure.
+  //
+  // Deleting the file *before* calling listArtifacts() would not exercise
+  // this: Bun's Glob.scan() with the default onlyFiles resolves each entry's
+  // type as it enumerates, so an already-missing file is filtered out of the
+  // scan itself and the per-file stat()/catch below it is never reached
+  // (verified empirically -- a dangling symlink is filtered the same way).
+  // The real bug is a TOCTOU race: the file exists when the directory is
+  // scanned but is gone by the time this function's own stat() call runs.
+  // Firing the unlink() without awaiting it, immediately after starting (not
+  // awaiting) listArtifacts(), reproduces that ordering -- confirmed
+  // reliable (20/20) against this implementation, and confirmed to catch the
+  // pre-fix single-try-around-the-whole-loop version returning [] instead.
+  const dir = join(artifactsDir(), "-home-taha-github-demo");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "survivor.html"), "<html></html>");
+  const doomed = join(dir, "doomed.html");
+  await writeFile(doomed, "<html></html>");
+
+  const pending = listArtifacts();
+  void unlink(doomed);
+  const out = await pending;
+
+  const names = out.map((a) => a.name);
+  expect(names).toContain("survivor");
+  expect(names).not.toContain("doomed");
+});
+
 test("sorts newest first", async () => {
   const dir = join(artifactsDir(), "-home-taha-github-demo");
   await mkdir(dir, { recursive: true });

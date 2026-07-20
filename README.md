@@ -24,9 +24,14 @@ Pin `http://127.0.0.1:7317/live` — it redirects to whichever session was
 most recently active, so it's the one link worth bookmarking.
 
 Reads `~/.claude/projects` **read-only**. All writes go under
-`~/.claude/htmlview/` (derived search cache + artifact library), or wherever
-`HTMLVIEW_CACHE_DIR` points if you set it — useful for pointing the cache at
-a different location or isolating it in tests.
+`~/.claude/htmlview/` (derived search cache + artifact library), split across
+two independently overridable directories — useful for pointing either at a
+different location or isolating them in tests:
+
+- `HTMLVIEW_CACHE_DIR` — the derived search cache. Defaults to
+  `~/.claude/htmlview/cache`.
+- `HTMLVIEW_ARTIFACTS_DIR` — the artifact library (see below). Defaults to
+  `~/.claude/htmlview/artifacts`.
 
 ## Measured facts
 
@@ -80,9 +85,11 @@ library at `/artifacts`; a single artifact is served at
 Thinking blocks are never rendered, because Claude Code does not persist
 thinking content to the transcript. A direct scan of the real corpus
 (`~/.claude/projects/*/*.jsonl`, top-level session files only, as of this
-verification pass) found **3,966 thinking blocks, all empty** — each has
-`"thinking": ""` and only a long opaque `signature` field. Rendering an
-empty block would just be visual noise, so the client skips them.
+verification pass, re-measured 2026-07-20) found **3,968 thinking blocks,
+all empty** — each has `"thinking": ""` and only a long opaque `signature`
+field. The corpus grows over time, so treat this as indicative rather than
+an exact figure. Rendering an empty block would just be visual noise, so the
+client skips them.
 
 ## What it does not do
 
@@ -92,8 +99,11 @@ re-litigated by a future reader:
 - **Browser-side input.** The client is read-only; you can't reply to a
   session from the browser. Permitted as a future extension, but out of
   scope for v1 — Channels would be the natural route in if it's ever added.
-- **Server-side markdown rendering.** Prose is shown close to raw; there's
-  no markdown-to-HTML pipeline on the server.
+- **Server-side markdown rendering.** Markdown IS rendered — client-side, in
+  the browser, via `marked`. What's deferred is a server-side
+  markdown-to-HTML pipeline, which would only be needed to export a
+  standalone rendered turn (e.g. as a static HTML file); the raw markdown is
+  stored either way, so adding that later needs no data migration.
 - **Search over tool inputs/outputs.** The search cache indexes human and
   assistant prose only. Tool calls and their results are not searchable.
 - **Ranked search.** Results are returned in match order, not scored or

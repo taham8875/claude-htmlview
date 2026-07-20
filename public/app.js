@@ -156,10 +156,12 @@ function turnNode(turn) {
     section.append(u);
   }
 
-  // No thinking rendering: verified thinking content is never persisted (all
-  // 3817 blocks in the corpus are "" with only an encrypted signature) --
-  // transcript.ts's own parser never even pushes a "thinking" block for
-  // real data, since `if (b.thinking)` is false for an empty string.
+  // No thinking rendering: verified thinking content is never persisted (a
+  // direct scan of the corpus found 3,968 thinking blocks, all "" with only
+  // an encrypted signature -- re-measured 2026-07-20; the corpus grows, so
+  // treat the exact figure as indicative, not exact) -- transcript.ts's own
+  // parser never even pushes a "thinking" block for real data, since
+  // `if (b.thinking)` is false for an empty string.
   turn.blocks.forEach((b, i) => {
     if (b.kind === "text") section.append(md(b.text));
     else if (b.kind === "tool") section.append(toolNode(b, `${turn.index}-${i}`));

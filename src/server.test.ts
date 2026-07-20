@@ -1,9 +1,27 @@
 // src/server.test.ts
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { createServer } from "./server";
 import { mkdtemp, mkdir, writeFile, symlink, unlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// Redirect the search cache to a temp dir for the whole file, same seam and
+// same reason as searchcache.test.ts and artifacts.test.ts: since the server
+// now rebuilds a session's cache entry from its watcher callback (finding 1),
+// any test here that modifies a fixture session file to trigger the watcher
+// (see the SSE broadcast test below) would otherwise write into the user's
+// real ~/.claude/htmlview/cache as a side effect of `bun test`.
+let tmpCache: string;
+const savedCacheEnv = process.env.HTMLVIEW_CACHE_DIR;
+beforeAll(async () => {
+  tmpCache = await mkdtemp(join(tmpdir(), "htmlview-s-cache-"));
+  process.env.HTMLVIEW_CACHE_DIR = tmpCache;
+});
+afterAll(async () => {
+  if (savedCacheEnv === undefined) delete process.env.HTMLVIEW_CACHE_DIR;
+  else process.env.HTMLVIEW_CACHE_DIR = savedCacheEnv;
+  await rm(tmpCache, { recursive: true, force: true });
+});
 
 async function fixtureServer() {
   const root = await mkdtemp(join(tmpdir(), "htmlview-s-"));
@@ -230,6 +248,18 @@ test("a dead/aborted SSE client is dropped without breaking the broadcast for ot
   // watch.test.ts. What this test exists to prove either way is that client
   // A's disconnect didn't throw out of the fetch() calls above or hang the
   // server — reaching this line at all is evidence of that.
+
+  // The watcher event above also kicks off a fire-and-forget cache rebuild
+  // (finding 1) that this test never awaits directly -- it's not on any
+  // promise chain the test already holds. Poll for it to land under this
+  // file's HTMLVIEW_CACHE_DIR override before returning: otherwise the
+  // write can still be in flight when this file's afterAll restores the
+  // real env var, and it would land in the user's real cache instead
+  // (verified this happens without the wait -- see report).
+  const deadline = Date.now() + 2000;
+  while (!(await Bun.file(join(tmpCache, "sess-a.txt")).exists()) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
 
   await reader.cancel();
   server.stop();
