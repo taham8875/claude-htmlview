@@ -9,5 +9,8 @@ transcripts on 2026-07-20. See the spec's "Transcript format" section.
 - `edge.jsonl` — every shape that breaks a naive parser: ignored entry
   types, `isMeta`, harness-injected strings, image blocks, `message.id`
   duplicates, array-valued `tool_result.content`, unknown entry type.
+- `escaping.jsonl` — text containing real tab/newline characters mixed
+  with literal backslash-n / backslash-t sequences, for the search
+  cache's escape/unescape round trip (Task 6).
 
 Do not "tidy" these files. Each oddity is deliberate.

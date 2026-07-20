@@ -1,0 +1,2 @@
+{"type":"user","uuid":"u1","timestamp":"2026-07-20T11:00:00.000Z","isSidechain":false,"message":{"role":"user","content":"before\nafter\ttab-end"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-07-20T11:00:01.000Z","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"regex uses \\n and \\t for newline and tab; here col1\tcol2 too"}]}}
