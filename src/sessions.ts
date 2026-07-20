@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { parseTranscript } from "./transcript";
+import { parseTranscript, type Parsed, type Turn } from "./transcript";
 
 export type SessionMeta = {
   id: string;
@@ -88,6 +88,18 @@ export function decodeProject(dirName: string): string {
   return out;
 }
 
+function toMeta(id: string, dirName: string, file: string, mtimeMs: number, parsed: Parsed): SessionMeta {
+  return {
+    id,
+    project: decodeProject(dirName),
+    projectPath: dirName,
+    title: parsed.title ?? parsed.turns[0]?.userText?.slice(0, 80) ?? id,
+    turnCount: parsed.turns.length,
+    mtimeMs,
+    file,
+  };
+}
+
 export async function listSessions(
   projectsDir: string = defaultProjectsDir()
 ): Promise<SessionMeta[]> {
@@ -107,15 +119,7 @@ export async function listSessions(
       const parsed = parseTranscript(text);
       const id = basename(file, ".jsonl");
       const dirName = basename(dirname(file));
-      out.push({
-        id,
-        project: decodeProject(dirName),
-        projectPath: dirName,
-        title: parsed.title ?? parsed.turns[0]?.userText?.slice(0, 80) ?? id,
-        turnCount: parsed.turns.length,
-        mtimeMs: st.mtimeMs,
-        file,
-      });
+      out.push(toMeta(id, dirName, file, st.mtimeMs, parsed));
     } catch {
       continue; // deleted mid-scan, or unreadable — drop from index, never crash
     }
@@ -128,4 +132,53 @@ export async function newestSession(
   projectsDir: string = defaultProjectsDir()
 ): Promise<SessionMeta | null> {
   return (await listSessions(projectsDir))[0] ?? null;
+}
+
+/** Only characters real session ids (UUIDs, or the test fixtures' "sess-a" style) ever use. */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Look up a single session without parsing the rest of the corpus.
+ *
+ * listSessions() parses every transcript in projectsDir to build its index —
+ * fine for a one-time listing, but wrong for a route hit on every client
+ * navigation (GET /api/session/:id): on a real corpus that's 196 files/165MB,
+ * one file alone 57MB, all parsed just to find one session. This globs
+ * directly for the file matching `id` and parses only that file.
+ *
+ * `id` is re-validated here (server.ts also validates before calling) against
+ * a strict charset. That validation is load-bearing, not decoration: unlike
+ * listSessions().find(s => s.id === id) — pure string equality against
+ * already-enumerated real ids, so a hostile id can *never* touch the
+ * filesystem — this function puts `id` directly into a Glob pattern scoped to
+ * projectsDir. An unvalidated id containing "/" or ".." segments is a
+ * pattern-injection / path-traversal vector this approach didn't have before.
+ */
+export async function findSession(
+  id: string,
+  projectsDir: string = defaultProjectsDir()
+): Promise<{ meta: SessionMeta; turns: Turn[] } | null> {
+  if (!SESSION_ID_RE.test(id)) return null;
+
+  let file: string | undefined;
+  try {
+    // Non-recursive, same as listSessions: "*/<id>.jsonl" cannot match a
+    // subagent transcript nested under <session>/subagents/.
+    for await (const f of new Glob(`*/${id}.jsonl`).scan({ cwd: projectsDir, absolute: true })) {
+      file = f;
+      break; // ids are unique — the first match is the only match
+    }
+  } catch {
+    return null; // missing or unreadable projects dir
+  }
+  if (!file) return null;
+
+  try {
+    const [st, text] = await Promise.all([stat(file), Bun.file(file).text()]);
+    const parsed = parseTranscript(text);
+    const dirName = basename(dirname(file));
+    return { meta: toMeta(id, dirName, file, st.mtimeMs, parsed), turns: parsed.turns };
+  } catch {
+    return null; // deleted mid-request, or unreadable
+  }
 }

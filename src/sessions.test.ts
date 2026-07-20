@@ -1,6 +1,6 @@
 // src/sessions.test.ts
 import { test, expect } from "bun:test";
-import { decodeProject, resolveEncodedPath, listSessions } from "./sessions";
+import { decodeProject, resolveEncodedPath, listSessions, findSession } from "./sessions";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,4 +80,39 @@ test("never lists subagent transcripts as sessions", async () => {
 
 test("returns empty for a missing projects dir rather than throwing", async () => {
   expect(await listSessions("/nonexistent/path/xyz")).toEqual([]);
+});
+
+// findSession looks up one session without parsing the rest of the corpus
+// (listSessions parses every transcript to build its list -- too slow for a
+// route hit on every navigation, see server.ts). It must return the same
+// data listSessions would for that id, without touching sibling sessions.
+
+test("findSession returns the same meta and turns listSessions would, for one id", async () => {
+  const root = await fixtureDir();
+  const found = await findSession("sess-a", root);
+  expect(found).not.toBeNull();
+  expect(found!.meta.id).toBe("sess-a");
+  expect(found!.meta.project).toBe("~/github/demo");
+  expect(found!.meta.title).toBe("Check the font setup");
+  expect(found!.turns.length).toBe(2);
+});
+
+test("findSession returns null for an unknown id", async () => {
+  const root = await fixtureDir();
+  expect(await findSession("does-not-exist", root)).toBeNull();
+});
+
+test("findSession returns null rather than throwing for a traversal-shaped id", async () => {
+  const root = await fixtureDir();
+  // Must not be interpreted as a glob/path segment -- see the strict charset
+  // check in findSession. "/" alone would, if unvalidated, turn "*/<id>.jsonl"
+  // into a pattern that can walk outside projectsDir.
+  for (const id of ["../../../etc/passwd", "..", "a/b", "*", ""]) {
+    expect(await findSession(id, root)).toBeNull();
+  }
+});
+
+test("findSession never lists subagent transcripts as sessions", async () => {
+  const root = await fixtureDir();
+  expect(await findSession("agent-x", root)).toBeNull();
 });
