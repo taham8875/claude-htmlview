@@ -148,7 +148,7 @@ Six rules, applied client-side after `marked.js` parses. Rules 1–3 address ess
 - *User messages* — distinct, quiet styling; waypoints rather than content.
 - *Assistant text* — full width, all six bidi rules applied.
 - *Tool calls* — `<details>` collapsed. Summary line reads `Bash · check installed fonts` (tool name + description or first argument). Expand for full input and output.
-- *Thinking blocks* — behind a toggle, off by default.
+- *Thinking blocks* — **not rendered, and no toggle.** Verified: thinking content is never persisted. All 3,817 thinking blocks in the corpus carry `"thinking": ""` with only an encrypted `signature`; the reasoning text is not written to the transcript. A toggle would reveal nothing, so it is dead UI and is cut. The parser already skips empty thinking blocks. If Claude Code ever begins persisting thinking text, this is a small additive change.
 - *Artifacts* — HTML files produced during a turn appear as inline cards linking to the artifact.
 
 **`/live` — redirects to the most recently modified session.** The route to keep pinned: always shows the current working session, with no session IDs to bookmark or hunt for.

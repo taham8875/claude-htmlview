@@ -2213,9 +2213,6 @@ Expected: no external URLs fetched at runtime (URLs in comments are fine), and a
       <a href="/search">search</a>
       <a href="/artifacts">artifacts</a>
       <span style="flex: 1"></span>
-      <label class="muted" style="font-size: 13px">
-        <input type="checkbox" id="show-thinking" /> thinking
-      </label>
     </header>
     <main class="wrap" id="app">loading…</main>
     <script src="/vendor/marked.min.js"></script>
@@ -2295,14 +2292,11 @@ function turnNode(turn) {
     section.append(u);
   }
 
-  const showThinking = document.getElementById("show-thinking").checked;
+  // No thinking rendering: verified that thinking content is never persisted
+  // (all 3817 blocks in the corpus are "" with only an encrypted signature).
   for (const b of turn.blocks) {
     if (b.kind === "text") section.append(md(b.text));
-    else if (b.kind === "thinking" && showThinking) {
-      const t = md(b.text);
-      t.className = "thinking";
-      section.append(t);
-    } else if (b.kind === "tool") section.append(toolNode(b));
+    else if (b.kind === "tool") section.append(toolNode(b));
     else if (b.kind === "unknown") {
       const p = document.createElement("div");
       p.className = "placeholder";
@@ -2466,7 +2460,6 @@ document.addEventListener("click", (e) => {
   route();
 });
 window.addEventListener("popstate", route);
-document.getElementById("show-thinking").addEventListener("change", route);
 
 // Live updates. Re-render only when the change concerns the open session, and
 // only auto-scroll if the reader is already at the bottom.
