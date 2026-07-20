@@ -770,7 +770,8 @@ test("falls back to naive splitting when nothing exists on disk", () => {
 test("does not blow up exponentially on a pathological input", () => {
   // Adversarial filesystem: every multi-token grouping "exists" except any
   // touching the final token, so no complete resolution is ever found and the
-  // search must explore maximally. Unmemoized this took 10.6s at 24 tokens.
+  // search must explore maximally. Unbounded this took 10.6s at 24 tokens.
+  // Budget exhaustion degrades to the naive split, which is correct here.
   const n = 24;
   const name = "-" + Array.from({ length: n }, (_, i) => `t${i}`).join("-");
   const last = `t${n - 1}`;
@@ -865,13 +866,15 @@ export function resolveEncodedPath(
   exists: (p: string) => boolean = existsSync
 ): string {
   const tokens = dirName.replace(/^-/, "").split("-");
-  /**
-   * Memo on (i, prefix). Without it the search is O(2^n): measured against an
-   * adversarial filesystem, 24 tokens took 10.6s and 16.7M calls, growing
-   * ~2^(n-1). The memo collapses that to polynomial by never re-exploring a
-   * position already known to fail.
-   */
-  const memo = new Map<string, string | null>();
+  // Hard budget on filesystem probes. A memo keyed on (i, prefix) does NOT
+  // help: every distinct split reaching position i carries a different prefix,
+  // so keys are near-unique and it almost never hits. The subproblem genuinely
+  // depends on the whole prefix, because exists() tests the full path — so the
+  // search is inherently exponential and must be bounded instead of memoized.
+  // Measured unbounded: 24 tokens took 10.6s across 16.7M calls.
+  // Real dirs use a handful of probes; exhausting the budget degrades to the
+  // naive split rather than hanging the server.
+  let budget = 20_000;
 
   /**
    * Returns a fully-resolved path from position i, or null if none exists.
@@ -884,22 +887,15 @@ export function resolveEncodedPath(
    */
   function walk(i: number, prefix: string): string | null {
     if (i >= tokens.length) return prefix;
-    const key = `${i} ${prefix}`;
-    const cached = memo.get(key);
-    if (cached !== undefined) return cached;
 
-    let result: string | null = null;
     for (let j = tokens.length; j > i; j--) {
+      if (budget-- <= 0) return null; // exhausted — caller falls back to naive
       const next = `${prefix}/${tokens.slice(i, j).join("-")}`;
       if (!exists(next)) continue;
       const resolved = walk(j, next);
-      if (resolved !== null) {
-        result = resolved;
-        break;
-      }
+      if (resolved !== null) return resolved;
     }
-    memo.set(key, result);
-    return result;
+    return null;
   }
 
   return walk(0, "") ?? "/" + tokens.join("/");
