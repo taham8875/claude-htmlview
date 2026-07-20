@@ -1008,7 +1008,24 @@ git commit -m "feat: session index with project decoding, excluding subagents"
 
 ```ts
 // src/searchcache.test.ts
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdtemp, rm as rmrf } from "node:fs/promises";
+import { tmpdir } from "node:os";
+
+// Redirect the cache to a temp dir for the whole file. Without this, the test
+// asserting the derived-state property deletes the user's real cache.
+let tmpCache: string;
+const savedEnv = process.env.HTMLVIEW_CACHE_DIR;
+beforeAll(async () => {
+  tmpCache = await mkdtemp(join(tmpdir(), "htmlview-cache-"));
+  process.env.HTMLVIEW_CACHE_DIR = tmpCache;
+});
+afterAll(async () => {
+  if (savedEnv === undefined) delete process.env.HTMLVIEW_CACHE_DIR;
+  else process.env.HTMLVIEW_CACHE_DIR = savedEnv;
+  await rmrf(tmpCache, { recursive: true, force: true });
+});
+
 import { buildCacheEntry, readCacheEntry, cacheDir } from "./searchcache";
 import type { SessionMeta } from "./sessions";
 import { rm, stat } from "node:fs/promises";
@@ -1098,7 +1115,16 @@ export type CacheLine = {
   normalized: string;
 };
 
-export const cacheDir = () => join(homedir(), ".claude", "htmlview", "cache");
+/**
+ * Cache location. Overridable via HTMLVIEW_CACHE_DIR.
+ *
+ * The override exists because tests must never touch the real cache: a test
+ * asserting the derived-state property calls `rm(cacheDir(), {recursive:true})`,
+ * and without a seam that deletes the user's actual 93-entry cache as a side
+ * effect of running `bun test`. Tests point this at a temp dir.
+ */
+export const cacheDir = () =>
+  process.env.HTMLVIEW_CACHE_DIR ?? join(homedir(), ".claude", "htmlview", "cache");
 
 const escape = (s: string) => s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
 const unescape = (s: string) =>
