@@ -1,0 +1,10 @@
+{
+  "name": "claude-htmlview",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "test": "bun test"
+  }
+}
