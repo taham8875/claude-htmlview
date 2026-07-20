@@ -1,11 +1,25 @@
 // src/searchcache.test.ts
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { buildCacheEntry, readCacheEntry, cacheDir, refreshCache, cachedSourceMtime } from "./searchcache";
 import type { SessionMeta } from "./sessions";
-import { rm, stat, mkdir, writeFile, utimes } from "node:fs/promises";
-import { mkdtemp } from "node:fs/promises";
+import { rm, stat, mkdir, writeFile, utimes, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// Redirect the cache to a temp dir for the whole file. Without this, the test
+// below asserting the derived-state property (`rm(cacheDir(), {recursive:true})`)
+// deletes the user's real ~/.claude/htmlview/cache as a side effect of `bun test`.
+let tmpCache: string;
+const savedEnv = process.env.HTMLVIEW_CACHE_DIR;
+beforeAll(async () => {
+  tmpCache = await mkdtemp(join(tmpdir(), "htmlview-cache-"));
+  process.env.HTMLVIEW_CACHE_DIR = tmpCache;
+});
+afterAll(async () => {
+  if (savedEnv === undefined) delete process.env.HTMLVIEW_CACHE_DIR;
+  else process.env.HTMLVIEW_CACHE_DIR = savedEnv;
+  await rm(tmpCache, { recursive: true, force: true });
+});
 
 const meta = (id: string): SessionMeta => ({
   id, project: "~/demo", projectPath: "-home-taha-demo",
@@ -73,9 +87,22 @@ test("cache is derived state: deleting the dir is harmless", async () => {
   expect((await readCacheEntry("t-rebuild")).length).toBeGreaterThan(0);
 });
 
-test("never writes outside ~/.claude/htmlview", async () => {
+test("cacheDir resolves under ~/.claude/htmlview when unoverridden", () => {
+  // Pure string check -- deliberately does not clear HTMLVIEW_CACHE_DIR and
+  // call buildCacheEntry(), which would write to the real cache. Confirms the
+  // path formula itself, independent of the test-time override in place above.
+  const saved = process.env.HTMLVIEW_CACHE_DIR;
+  delete process.env.HTMLVIEW_CACHE_DIR;
+  try {
+    expect(cacheDir()).toContain("/.claude/htmlview/");
+  } finally {
+    if (saved === undefined) delete process.env.HTMLVIEW_CACHE_DIR;
+    else process.env.HTMLVIEW_CACHE_DIR = saved;
+  }
+});
+
+test("buildCacheEntry writes a file that can be stat'd at cacheDir()", async () => {
   await buildCacheEntry(meta("t-path"));
-  expect(cacheDir()).toContain("/.claude/htmlview/");
   await stat(join(cacheDir(), "t-path.txt")); // throws if absent
 });
 
@@ -90,15 +117,19 @@ async function projectDir() {
 
 test("refreshCache rebuilds missing entries and skips up-to-date ones", async () => {
   const { root, file } = await projectDir();
-  await rm(join(cacheDir(), "sess-refresh.txt"), { force: true });
+  try {
+    await rm(join(cacheDir(), "sess-refresh.txt"), { force: true });
 
-  expect(await refreshCache(root)).toBe(1); // no cache yet -> rebuild
-  expect(await refreshCache(root)).toBe(0); // source unchanged -> skip
+    expect(await refreshCache(root)).toBe(1); // no cache yet -> rebuild
+    expect(await refreshCache(root)).toBe(0); // source unchanged -> skip
 
-  // Touch the source with a strictly later mtime and confirm it rebuilds.
-  const future = new Date(Date.now() + 5000);
-  await utimes(file, future, future);
-  expect(await refreshCache(root)).toBe(1);
+    // Touch the source with a strictly later mtime and confirm it rebuilds.
+    const future = new Date(Date.now() + 5000);
+    await utimes(file, future, future);
+    expect(await refreshCache(root)).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // Freshness is now driven by a `#src-mtime <ms>` header recorded inside the
@@ -125,17 +156,21 @@ test("freshness is driven by the recorded source mtime, not file timestamps", as
 
 test("pre-header cache file rebuilds exactly once, then is up to date", async () => {
   const { root, file } = await projectDir();
-  const target = join(cacheDir(), "sess-refresh.txt");
-  await rm(target, { force: true });
-  void file;
+  try {
+    const target = join(cacheDir(), "sess-refresh.txt");
+    await rm(target, { force: true });
+    void file;
 
-  // Simulate a cache entry written by the old (pre-header) format.
-  await mkdir(cacheDir(), { recursive: true });
-  await writeFile(target, "0\tuser\told format, no header\n");
-  expect(await cachedSourceMtime("sess-refresh")).toBeNull();
+    // Simulate a cache entry written by the old (pre-header) format.
+    await mkdir(cacheDir(), { recursive: true });
+    await writeFile(target, "0\tuser\told format, no header\n");
+    expect(await cachedSourceMtime("sess-refresh")).toBeNull();
 
-  expect(await refreshCache(root)).toBe(1); // migrates: rebuilds exactly once
-  expect(await refreshCache(root)).toBe(0); // now up to date
+    expect(await refreshCache(root)).toBe(1); // migrates: rebuilds exactly once
+    expect(await refreshCache(root)).toBe(0); // now up to date
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("the #src-mtime header never leaks into search results", async () => {

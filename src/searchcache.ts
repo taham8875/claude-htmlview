@@ -13,7 +13,16 @@ export type CacheLine = {
   normalized: string;
 };
 
-export const cacheDir = () => join(homedir(), ".claude", "htmlview", "cache");
+/**
+ * Cache location. Overridable via HTMLVIEW_CACHE_DIR.
+ *
+ * The override exists because tests must never touch the real cache: a test
+ * asserting the derived-state property calls `rm(cacheDir(), {recursive:true})`,
+ * and without a seam that deletes the user's actual cache as a side effect of
+ * running `bun test`. Tests point this at a temp dir.
+ */
+export const cacheDir = () =>
+  process.env.HTMLVIEW_CACHE_DIR ?? join(homedir(), ".claude", "htmlview", "cache");
 
 // Backslashes must be doubled *before* newline/tab are escaped, otherwise the
 // backslash introduced by the \n/\t substitution would itself get doubled on
