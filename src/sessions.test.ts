@@ -35,6 +35,22 @@ test("falls back to naive splitting when nothing exists on disk", () => {
     .toBe("/nonexistent/alpha/beta");
 });
 
+test("does not blow up exponentially on a pathological input", () => {
+  // Adversarial filesystem: every multi-token grouping "exists" except any
+  // touching the final token, so no complete resolution is ever found and the
+  // search must explore maximally. Unmemoized this took 10.6s at 24 tokens.
+  const n = 24;
+  const name = "-" + Array.from({ length: n }, (_, i) => `t${i}`).join("-");
+  const last = `t${n - 1}`;
+  const exists = (p: string) => !p.endsWith(`-${last}`) && !p.endsWith(`/${last}`);
+  const t0 = performance.now();
+  const out = resolveEncodedPath(name, exists);
+  const ms = performance.now() - t0;
+  // Budget exhausted -> naive split, which is the correct degradation here.
+  expect(out).toBe("/" + Array.from({ length: n }, (_, i) => `t${i}`).join("/"));
+  expect(ms).toBeLessThan(1000);
+});
+
 async function fixtureDir() {
   const root = await mkdtemp(join(tmpdir(), "htmlview-"));
   const proj = join(root, "-home-taha-github-demo");

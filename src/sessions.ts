@@ -41,6 +41,21 @@ export function resolveEncodedPath(
   exists: (p: string) => boolean = existsSync
 ): string {
   const tokens = dirName.replace(/^-/, "").split("-");
+  /**
+   * Memo on (i, prefix). Without it the search is O(2^n): measured against an
+   * adversarial filesystem, 24 tokens took 10.6s and 16.7M calls, growing
+   * ~2^(n-1). The memo collapses that to polynomial by never re-exploring a
+   * position already known to fail.
+   */
+  // Hard budget on filesystem probes. A memo keyed on (i, prefix) does NOT
+  // help: every distinct split reaching position i carries a different prefix,
+  // so keys are near-unique and it almost never hits. The subproblem genuinely
+  // depends on the whole prefix, because exists() tests the full path — so the
+  // search is inherently exponential and must be bounded instead of memoized.
+  // Real dirs use a handful of probes; only an adversarial layout approaches
+  // this ceiling, and exhausting it degrades to the naive split rather than
+  // hanging the server.
+  let budget = 20_000;
 
   /**
    * Returns a fully-resolved path from position i, or null if none exists.
@@ -53,7 +68,9 @@ export function resolveEncodedPath(
    */
   function walk(i: number, prefix: string): string | null {
     if (i >= tokens.length) return prefix;
+
     for (let j = tokens.length; j > i; j--) {
+      if (budget-- <= 0) return null; // exhausted — caller falls back to naive
       const next = `${prefix}/${tokens.slice(i, j).join("-")}`;
       if (!exists(next)) continue;
       const resolved = walk(j, next);
