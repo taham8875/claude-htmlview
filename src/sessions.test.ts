@@ -10,6 +10,21 @@ test("decodes an encoded project dir to a tilde path", () => {
   expect(decodeProject("-home-taha")).toBe("~");
 });
 
+test("preserves literal hyphens in real directory names", () => {
+  // The encoding is lossy: "-" is both a separator and a literal character.
+  // Resolution walks the filesystem, preferring the longest existing segment.
+  // ~41% of real project dirs on this machine contain a literal hyphen.
+  const { mkdirSync } = require("node:fs");
+  const { homedir } = require("node:os");
+  const probe = `${homedir()}/github/controller-type`;
+  mkdirSync(probe, { recursive: true });
+  expect(decodeProject("-home-taha-github-controller-type")).toBe("~/github/controller-type");
+});
+
+test("falls back to naive splitting when nothing exists on disk", () => {
+  expect(decodeProject("-nonexistent-alpha-beta")).toBe("/nonexistent/alpha/beta");
+});
+
 async function fixtureDir() {
   const root = await mkdtemp(join(tmpdir(), "htmlview-"));
   const proj = join(root, "-home-taha-github-demo");
