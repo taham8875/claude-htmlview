@@ -25,8 +25,10 @@ const esc = (s) =>
  * out to an attacker-controlled host from the browser and exfiltrate other
  * sessions' content, which is worse than the injection itself. A zero-dependency
  * constraint rules out pulling in a real sanitizer (DOMPurify), so this is a
- * small hand-rolled DOM pass, not a substitute for one -- it targets the
- * vectors that actually execute when HTML is assigned via innerHTML:
+ * small hand-rolled DOM pass, not a substitute for one. It is a pragmatic
+ * denylist against the vectors known to matter for this corpus -- not an
+ * exhaustive allowlist-based sanitizer, and it should not be read as covering
+ * every possible HTML injection vector:
  *   - <script> elements are inert once parsed via innerHTML per the HTML spec
  *     (verified), but are still stripped for cleanliness/defense in depth.
  *   - event-handler attributes (onerror, onload, onclick, ...) DO fire once
@@ -34,13 +36,25 @@ const esc = (s) =>
  *   - <iframe src="javascript:...">, <object>, <embed> can execute or load
  *     content on insertion with no user interaction -- the elements are removed
  *     outright, there is no legitimate use of them in a chat transcript.
- *   - <a href="javascript:...">/<img src="javascript:...">) -- scheme-checked
- *     and stripped.
+ *   - URL-bearing attributes (href, xlink:href on SVG <a>, formaction on
+ *     <button>, poster on <video>, and src on everything except <img>) are
+ *     scheme-checked and stripped of javascript:/vbscript:/data:/file:.
+ *   - src on <img> gets one narrow exception: data:image/* (excluding
+ *     data:image/svg+xml, which can carry an <svg onload=...> payload) is
+ *     permitted, because a data: URI loaded as an image source cannot execute
+ *     script -- only a *navigable* context (href, iframe) is dangerous -- and
+ *     the corpus has 88 real pasted screenshots rendered exactly this way.
  * This is best-effort, not exhaustive; if the no-dependency constraint is ever
  * relaxed, swap this for DOMPurify.
  */
 const UNSAFE_ELEMENTS = "script, style, iframe, object, embed, link, meta, base, form";
 const DANGEROUS_SCHEME = /^(?:javascript|vbscript|data|file):/i;
+// Attributes other than `src` that can carry a navigable/executable URL.
+// xlink:href is namespaced -- el.hasAttribute("href") does not match an SVG
+// <a xlink:href="..."> at all, so it needs its own check.
+const URL_ATTRS = ["href", "xlink:href", "formaction", "poster"];
+// data:image/<type>[;params], excluding svg+xml (can embed <script>/onload).
+const SAFE_IMG_DATA_URL = /^data:image\/(?!svg\+xml\b)[^;,]+[;,]/i;
 
 /** True if `raw` resolves to a script-executing URL scheme once whitespace
  *  (a common obfuscation, e.g. "java\tscript:") is stripped -- browsers ignore
@@ -50,17 +64,27 @@ function isDangerousUrl(raw) {
   return DANGEROUS_SCHEME.test(String(raw ?? "").replace(/\s+/g, ""));
 }
 
+/** True if `raw` is a data: URI for a (non-SVG) raster image -- safe as an
+ *  <img src>, since it cannot execute script, only display a bitmap. */
+function isSafeImgDataUrl(raw) {
+  return SAFE_IMG_DATA_URL.test(String(raw ?? "").replace(/\s+/g, ""));
+}
+
 function sanitize(root) {
   for (const el of root.querySelectorAll(UNSAFE_ELEMENTS)) el.remove();
   for (const el of root.querySelectorAll("*")) {
     for (const attr of [...el.attributes]) {
       if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
     }
-    if (el.hasAttribute("href") && isDangerousUrl(el.getAttribute("href"))) {
-      el.removeAttribute("href");
+    for (const name of URL_ATTRS) {
+      if (el.hasAttribute(name) && isDangerousUrl(el.getAttribute(name))) {
+        el.removeAttribute(name);
+      }
     }
-    if (el.hasAttribute("src") && isDangerousUrl(el.getAttribute("src"))) {
-      el.removeAttribute("src");
+    if (el.hasAttribute("src")) {
+      const src = el.getAttribute("src");
+      const imgDataException = el.tagName === "IMG" && isSafeImgDataUrl(src);
+      if (!imgDataException && isDangerousUrl(src)) el.removeAttribute("src");
     }
   }
 }
@@ -195,6 +219,7 @@ let pagedBack = false;
 async function renderThread(id) {
   currentSession = id;
   pagedBack = false;
+  hidePendingIndicator();
   const data = await (await fetch(`/api/session/${encodeURIComponent(id)}`)).json();
   if (data.error) {
     app.textContent = "session not found";
@@ -304,6 +329,10 @@ async function renderArtifacts() {
 function route() {
   const p = location.pathname;
   if (p.startsWith("/s/")) return renderThread(decodeURIComponent(p.slice(3)));
+  // Leaving the thread view entirely: no open session left to receive live
+  // updates for, so drop any stale pending-update state along with it.
+  currentSession = null;
+  hidePendingIndicator();
   if (p === "/search") return renderSearch();
   if (p === "/artifacts") return renderArtifacts();
   return renderIndex();
@@ -331,22 +360,70 @@ window.addEventListener("popstate", route);
 //     renderThread() always re-fetches just the last-50-turns window, with
 //     no memory of how far back they had paged.
 // Neither is acceptable for the primary use case (watching a live session
-// while occasionally scrolling back to check something), so: skip the
-// refresh entirely unless the reader is at the bottom AND hasn't paged back,
-// and re-open whatever <details> were open before the rebuild.
-new EventSource("/events").onmessage = async (e) => {
-  const { sessionId } = JSON.parse(e.data);
-  if (sessionId !== currentSession) return;
-  if (pagedBack || !atBottom()) return;
+// while occasionally scrolling back to check something), so: refresh
+// immediately only when the reader is at the bottom AND hasn't paged back,
+// re-opening whatever <details> were open before the rebuild.
+//
+// But suppressing the refresh must not mean *discarding* the event: that
+// would silently drop live updates forever, with no way back short of a
+// manual reload -- worse than the yank/collapse behaviour it replaced, for a
+// viewer whose headline feature is watching a session live. So a suppressed
+// event instead marks a pending-update flag and shows a small "new activity"
+// pill fixed near the bottom of the page. The pill is recovered from either
+// by scrolling back to the bottom (a `scroll` listener notices and refreshes
+// automatically, itself still gated on `!pagedBack` for the same reason as
+// above) or by clicking the pill directly, which always refreshes -- an
+// explicit click is an acceptable time to also give up paged-back history,
+// the same tradeoff a manual reload would make.
+const updatePill = document.createElement("button");
+updatePill.id = "update-pill";
+updatePill.type = "button";
+updatePill.hidden = true;
+document.body.append(updatePill);
 
+let pendingUpdateCount = 0;
+
+function showPendingIndicator() {
+  pendingUpdateCount += 1;
+  updatePill.textContent =
+    pendingUpdateCount === 1 ? "new activity ↓" : `${pendingUpdateCount} new updates ↓`;
+  updatePill.hidden = false;
+}
+
+function hidePendingIndicator() {
+  pendingUpdateCount = 0;
+  updatePill.hidden = true;
+}
+
+async function refreshLiveThread(sessionId) {
   const openKeys = new Set(
     [...document.querySelectorAll(".tool[open]")].map((d) => d.dataset.key)
   );
-  await renderThread(sessionId);
+  await renderThread(sessionId); // also clears pendingUpdateCount/hides the pill
   for (const d of document.querySelectorAll(".tool")) {
     if (openKeys.has(d.dataset.key)) d.open = true;
   }
   window.scrollTo(0, document.body.scrollHeight);
+}
+
+updatePill.onclick = () => {
+  if (currentSession) refreshLiveThread(currentSession);
+};
+
+window.addEventListener("scroll", () => {
+  if (pendingUpdateCount > 0 && !pagedBack && currentSession && atBottom()) {
+    refreshLiveThread(currentSession);
+  }
+});
+
+new EventSource("/events").onmessage = (e) => {
+  const { sessionId } = JSON.parse(e.data);
+  if (sessionId !== currentSession) return;
+  if (pagedBack || !atBottom()) {
+    showPendingIndicator();
+    return;
+  }
+  refreshLiveThread(sessionId);
 };
 
 route();
