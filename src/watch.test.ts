@@ -1,11 +1,23 @@
 // src/watch.test.ts
-import { test, expect } from "bun:test";
+import { test, expect, afterAll } from "bun:test";
 import { watchProjects } from "./watch";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Every temp root is tracked and removed at the end. Without this the suite
+// orphans a directory per test per run — 448 had accumulated under /tmp.
+const roots: string[] = [];
+const tmpRoot = async () => {
+  const r = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  roots.push(r);
+  return r;
+};
+afterAll(async () => {
+  for (const r of roots) await rm(r, { recursive: true, force: true });
+});
 
 // Timing notes: these tests watch real fs events, so some timing dependence
 // is unavoidable — debouncing is inherently about time. Margins below are
@@ -14,7 +26,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // not tight guesses. See task-8-report.md for the measurements.
 
 test("fires when a session file changes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  const root = await tmpRoot();
   const proj = join(root, "-home-taha-demo");
   await mkdir(proj, { recursive: true });
   await writeFile(join(proj, "sess-1.jsonl"), "{}\n");
@@ -30,7 +42,7 @@ test("fires when a session file changes", async () => {
 });
 
 test("debounces a burst of writes into one event", async () => {
-  const root = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  const root = await tmpRoot();
   const proj = join(root, "-home-taha-demo");
   await mkdir(proj, { recursive: true });
   await writeFile(join(proj, "sess-2.jsonl"), "{}\n");
@@ -52,7 +64,7 @@ test("debounces a burst of writes into one event", async () => {
 });
 
 test("ignores non-jsonl files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  const root = await tmpRoot();
   const proj = join(root, "-home-taha-demo");
   await mkdir(proj, { recursive: true });
 
@@ -67,7 +79,7 @@ test("ignores non-jsonl files", async () => {
 });
 
 test("close() stops delivering events", async () => {
-  const root = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  const root = await tmpRoot();
   const proj = join(root, "-home-taha-demo");
   await mkdir(proj, { recursive: true });
 
@@ -87,7 +99,7 @@ test("does not throw on a missing projects dir", async () => {
 });
 
 test("picks up a session file in a project dir created after startup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  const root = await tmpRoot();
 
   const seen: string[] = [];
   const handle = await watchProjects(root, (id) => seen.push(id), 30);
@@ -103,7 +115,7 @@ test("picks up a session file in a project dir created after startup", async () 
 });
 
 test("does not crash when a watched project dir is removed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "htmlview-w-"));
+  const root = await tmpRoot();
   const proj = join(root, "-home-taha-demo");
   await mkdir(proj, { recursive: true });
   await writeFile(join(proj, "sess-5.jsonl"), "{}\n");
