@@ -161,7 +161,7 @@ The cache is written by the same `fs.watch` loop that drives live updates, and i
 
 Naive substring matching fails badly on Arabic, so both the indexed text and the query pass through the same normalization:
 
-- **Strip tashkeel** (diacritics `U+064B`–`U+0652`) — usually absent when typing, often present in written text.
+- **Strip tashkeel** (diacritics `U+064B`–`U+0652`, plus `U+0670` superscript/dagger alef) — usually absent when typing, often present in written text.
 - **Unify alef forms** — `أ إ آ ٱ` -> `ا`.
 - **Unify taa marbuta** `ة` -> `ه`, and **alef maqsura** `ى` -> `ي`.
 - **Strip tatweel** (`U+0640`), a purely decorative elongation.
