@@ -70,6 +70,39 @@ The server never writes to `~/.claude/projects`, never modifies `settings.json`,
 
 `transcript.ts` holds the only non-trivial logic and is pure: JSONL in, objects out. Testable with no server and no browser.
 
+### Transcript format (verified 2026-07-20 against all 144 local transcripts)
+
+Measured, not assumed. 36,036 lines across 84 session files, plus 60 subagent files.
+
+**Layout has two levels, not one:**
+
+- `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` — 84 session transcripts.
+- `~/.claude/projects/<encoded-cwd>/<session-id>/subagents/agent-<id>.jsonl` — 60 subagent transcripts, every entry `isSidechain: true`.
+
+> **Session discovery MUST glob `*/*.jsonl` only — never recursively.** A recursive glob lists subagent files as if they were sessions. Subagent transcripts are out of scope for v1; the main transcript already shows the `Task` tool_use and its result. This also keeps the watch strategy at two levels as designed.
+
+**Entry types observed** (`type` field): `assistant` (12127), `user` (8377), `last-prompt`, `mode`, `permission-mode`, `ai-title`, `system`, `file-history-snapshot`, `attachment`, `agent-name`, `queue-operation`, `file-history-delta`, `frame-link`.
+
+Only `assistant`, `user`, and `ai-title` are consumed. All others are ignored — but an entry type *not in this list* renders as the neutral placeholder, so a format change surfaces.
+
+**Session titles come free.** `{"type":"ai-title","aiTitle":"Fix USB file copy error","sessionId":"..."}` is present in 82 of 84 sessions. Use `aiTitle` when present; fall back to the first real user message otherwise.
+
+**`message.content` is a string OR an array.** 3,110 user entries carry a bare string rather than a block array. The parser must handle both or it crashes on a third of user entries.
+
+**Not every `user` entry is a user message.** Filter out:
+- `isMeta: true` — injected content (e.g. image cache references).
+- String content wrapped in `<task-notification>`, `<system-reminder>`, or `<local-command-stdout>` — harness injections, not typed by the human.
+
+Both are excluded from turn boundaries, from search cache, and from title derivation.
+
+**`tool_result.content` is a string OR an array** — 4,242 string, 817 array. Both must be handled.
+
+**Truncation threshold is justified by data:** the largest observed `tool_result` string is 46,331 bytes. The 4KB cap is a real requirement, not a guess.
+
+**Block types observed:** assistant → `tool_use` (5059), `thinking` (3760), `text` (3308). User → `tool_result` (5059), `text` (220), `image` (100). Images are base64 and must never be inlined into the search cache.
+
+**Unparseable lines:** zero across all complete files, confirming malformed lines only occur on the live file being appended to. The skip-and-continue rule remains required.
+
 ### Definition of a "turn"
 
 Used throughout with a precise meaning: **one user message plus every assistant message and tool exchange that follows it, up to the next user message.** A turn therefore contains an ordered list of blocks — assistant text, tool_use paired with its tool_result, and thinking — which may span several `message.id` values. This is the unit rendered in the thread view and the unit counted for pagination.
