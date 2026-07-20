@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><link rel="stylesheet" href="/style.css" /></head>
+  <body class="wrap">
+    <div id="t"></div>
+    <script type="module">
+      import { applyBidi } from "/bidi.js";
+      document.getElementById("t").innerHTML = `
+        <p>هذه مشكلة في الكود</p>
+        <p>This is an English paragraph</p>
+        <p>افتح الملف <code>server.ts</code> ثم أعد التشغيل.</p>
+        <pre><code>const x = 1; // مثال</code></pre>
+        <ul><li>عنصر عربي</li><li>English item</li></ul>`;
+      applyBidi(document.getElementById("t"));
+      window.__dirs = [...document.querySelectorAll("p,li,pre")]
+        .map((e) => e.tagName + ":" + getComputedStyle(e).direction);
+    </script>
+  </body>
+</html>

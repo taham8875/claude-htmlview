@@ -1,0 +1,134 @@
+/* public/style.css
+   Rules 4-6 of the six bidi rules live here. No external resources: every font
+   named is verified installed locally (fc-list, checked at implementation
+   time: Noto Sans Arabic UI, Noto Sans Arabic, Iosevka NFM, DejaVu Sans Mono
+   all present). */
+
+:root {
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Arabic UI",
+    "Noto Sans Arabic", sans-serif;
+  --mono: "Iosevka NFM", "DejaVu Sans Mono", ui-monospace, monospace;
+  --bg: #0f1115;
+  --fg: #e6e6e6;
+  --muted: #8b93a7;
+  --line: #232733;
+  --accent: #7aa2f7;
+  --user-bg: #171a21;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fbfbfd; --fg: #1a1a1a; --muted: #5c6478;
+    --line: #e2e5ee; --user-bg: #f0f2f7;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  /* Rule 5: alignment follows dir automatically. Never text-align with a
+     physical direction (left/right) -- that would fight dir="auto". */
+  text-align: start;
+}
+
+/* Rule 6: Arabic diacritics and taller ascenders collide at Latin leading.
+   Two selectors, not one, and that's deliberate:
+     - [dir="rtl"] matches only a *literal* dir="rtl" attribute.
+     - :dir(rtl) matches an element's *resolved* directionality, which is
+       what dir="auto" (Rule 1, set by bidi.js on every block) actually
+       produces for Arabic content. Without :dir(rtl), this rule would be
+       silently dead: every block in this app carries dir="auto", never a
+       literal dir="rtl", so [dir="rtl"] alone never matches anything. */
+[dir="rtl"], :dir(rtl) {
+  line-height: 1.95;
+  letter-spacing: 0;
+}
+
+/* Rule 3: isolation prevents an English identifier inside Arabic prose from
+   dragging neighbouring punctuation to the wrong end of the line. */
+code, a, strong {
+  unicode-bidi: isolate;
+}
+
+/* Rule 2's declarative half: code is always LTR, and never wraps direction. */
+pre {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-x: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
+}
+
+code { font-family: var(--mono); font-size: 0.92em; }
+pre code { font-size: inherit; }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 120px; }
+
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; gap: 16px; align-items: center;
+  padding: 12px 20px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+header.top a { color: var(--muted); text-decoration: none; }
+header.top a:hover, header.top a.active { color: var(--fg); }
+
+.turn { padding: 8px 0 20px; border-bottom: 1px solid var(--line); }
+.turn:target { animation: flash 1.4s ease-out; }
+@keyframes flash {
+  from { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  to { background: transparent; }
+}
+
+.user {
+  background: var(--user-bg);
+  border-inline-start: 3px solid var(--accent);
+  padding: 10px 14px;
+  border-radius: 0 8px 8px 0;
+  margin-bottom: 14px;
+  white-space: pre-wrap;
+}
+
+.tool { margin: 10px 0; }
+.tool summary {
+  cursor: pointer; color: var(--muted); font-size: 13px;
+  font-family: var(--mono); padding: 4px 0;
+}
+.tool summary:hover { color: var(--fg); }
+.tool .body { padding-inline-start: 14px; border-inline-start: 1px solid var(--line); }
+
+.thinking { color: var(--muted); font-style: italic; }
+.placeholder {
+  color: var(--muted); font-family: var(--mono); font-size: 12px;
+  border: 1px dashed var(--line); border-radius: 6px; padding: 6px 10px;
+}
+
+.session-row { display: block; padding: 10px 0; border-bottom: 1px solid var(--line);
+  color: inherit; text-decoration: none; }
+.session-row:hover { background: var(--user-bg); }
+.session-row .meta { color: var(--muted); font-size: 12.5px; }
+
+mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+
+input[type="search"] {
+  width: 100%; padding: 10px 12px; font: inherit; text-align: start;
+  background: var(--user-bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+
+.muted { color: var(--muted); }
+.show-more { font: inherit; background: none; border: 0; color: var(--accent);
+  cursor: pointer; padding: 4px 0; }
