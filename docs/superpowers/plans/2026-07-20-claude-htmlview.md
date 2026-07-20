@@ -10,6 +10,32 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-20-claude-html-view-design.md`
 
+> ## The code in this plan is the ORIGINAL DESIGN, not the shipped implementation
+>
+> **`src/` and `public/` are authoritative.** Every code block below was the
+> starting point for a task; review found real defects in most of them, and the
+> fixes landed in source rather than being back-ported here. Read this document
+> for *intent and rationale*; read the source for *what actually runs*.
+>
+> Defects found in this plan's own reference code, for calibration:
+>
+> | Where | Defect | Consequence |
+> |---|---|---|
+> | Task 4 | deduped assistant entries by `message.id` | discarded ~83% of all assistant content |
+> | Task 4 | user `image` blocks dropped | pasted screenshots vanished silently |
+> | Task 5 | `decodeProject` split on every hyphen | ~41% of project paths displayed wrong |
+> | Task 5 | greedy resolver, no backtracking | wrong path when a similar sibling existed |
+> | Task 5 | (my "fix") memo keyed on `(i, prefix)` | did not work — keys near-unique; replaced with a probe budget |
+> | Task 6 | `>` vs `>=` on cache mtime | stale cache could never self-heal |
+> | Task 6 | `cacheDir()` had no test seam | `bun test` destroyed the user's real cache |
+> | Task 9 | `/api/session/:id` used `listSessions()` | parsed the whole 165MB corpus per request |
+> | Task 9 | static serving followed symlinks | a symlink in `public/` served `/etc/passwd` |
+> | Task 9 | traversal test used `fetch()` | vacuous — `new URL()` collapses `..` before the server sees it |
+> | Task 10 | Rule 6 used `[dir="rtl"]` | could never match, since Rule 1 sets `dir="auto"` — dead CSS |
+> | Task 11 | `marked` output straight to `innerHTML` | raw HTML and `javascript:` URLs passed through |
+>
+> `.superpowers/sdd/progress.md` records what changed per task and why.
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
