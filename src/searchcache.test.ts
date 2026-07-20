@@ -1,6 +1,6 @@
 // src/searchcache.test.ts
 import { test, expect } from "bun:test";
-import { buildCacheEntry, readCacheEntry, cacheDir, refreshCache } from "./searchcache";
+import { buildCacheEntry, readCacheEntry, cacheDir, refreshCache, cachedSourceMtime } from "./searchcache";
 import type { SessionMeta } from "./sessions";
 import { rm, stat, mkdir, writeFile, utimes } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
@@ -101,23 +101,46 @@ test("refreshCache rebuilds missing entries and skips up-to-date ones", async ()
   expect(await refreshCache(root)).toBe(1);
 });
 
-// Regression test for a real bug in the reference implementation: comparing
-// source mtime to cached mtime with a strict `>` misses the case where a
-// transcript is (re)written in the exact same millisecond the previous cache
-// build completed -- ties read as "not newer" and the stale cache survives
-// forever. `>=` is required so a tie is treated as "rebuild to be safe."
-test("rebuilds when the source mtime exactly ties the cache mtime", async () => {
+// Freshness is now driven by a `#src-mtime <ms>` header recorded inside the
+// cache file at build time (an exact equality check), not by comparing the
+// cache file's own mtime against the source's. This sidesteps the same-tick
+// problem entirely -- there is no second file's timestamp to tie against.
+// We control mtimeMs directly on the SessionMeta we build from, rather than
+// hoping real filesystem writes land on a particular millisecond.
+test("freshness is driven by the recorded source mtime, not file timestamps", async () => {
+  const tick = Date.now();
+  await buildCacheEntry({ ...meta("t-tick"), mtimeMs: tick });
+  expect(await cachedSourceMtime("t-tick")).toBe(tick);
+
+  // Scramble the cache file's own OS mtime to something unrelated -- e.g. as
+  // if the cache had been copied, restored, or touched. Under the old design
+  // (comparing the cache file's real mtime to the source's) this would have
+  // changed the freshness verdict. Under the new design it must not, because
+  // freshness comes entirely from the recorded header, never from stat().
+  const target = join(cacheDir(), "t-tick.txt");
+  const scrambled = new Date(tick + 12_345);
+  await utimes(target, scrambled, scrambled);
+  expect(await cachedSourceMtime("t-tick")).toBe(tick);
+});
+
+test("pre-header cache file rebuilds exactly once, then is up to date", async () => {
   const { root, file } = await projectDir();
   const target = join(cacheDir(), "sess-refresh.txt");
   await rm(target, { force: true });
+  void file;
 
-  await refreshCache(root); // creates the cache entry
-  const cachedAt = (await stat(target)).mtimeMs;
+  // Simulate a cache entry written by the old (pre-header) format.
+  await mkdir(cacheDir(), { recursive: true });
+  await writeFile(target, "0\tuser\told format, no header\n");
+  expect(await cachedSourceMtime("sess-refresh")).toBeNull();
 
-  // Force the source transcript's mtime to exactly equal the cache's mtime,
-  // simulating same-millisecond writes rather than hoping to reproduce one.
-  const tie = new Date(cachedAt);
-  await utimes(file, tie, tie);
+  expect(await refreshCache(root)).toBe(1); // migrates: rebuilds exactly once
+  expect(await refreshCache(root)).toBe(0); // now up to date
+});
 
-  expect(await refreshCache(root)).toBe(1);
+test("the #src-mtime header never leaks into search results", async () => {
+  await buildCacheEntry(meta("t-header-leak"));
+  const lines = await readCacheEntry("t-header-leak");
+  expect(lines.length).toBeGreaterThan(0);
+  expect(lines.some((l) => l.original.startsWith("#src-mtime"))).toBe(false);
 });

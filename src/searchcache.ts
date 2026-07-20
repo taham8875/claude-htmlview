@@ -1,5 +1,5 @@
 // src/searchcache.ts
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { parseTranscript } from "./transcript";
@@ -44,10 +44,29 @@ function extractLines(jsonl: string): string[] {
   return out;
 }
 
+/** First line of every cache file: the source mtime this entry was built from. */
+const HEADER = "#src-mtime ";
+
 export async function buildCacheEntry(session: SessionMeta): Promise<void> {
   const text = await Bun.file(session.file).text();
   await mkdir(cacheDir(), { recursive: true });
-  await Bun.write(join(cacheDir(), `${session.id}.txt`), extractLines(text).join("\n"));
+  // Record the source mtime we built from, rather than relying on the cache
+  // file's own write-completion mtime as a proxy. Comparing two independently
+  // timestamped files is ambiguous: they can tie within the same millisecond,
+  // and the cache file's mtime also drifts if it's copied, restored, or
+  // touched. Recording it is exact and immune to that drift.
+  const body = [HEADER + session.mtimeMs, ...extractLines(text)].join("\n");
+  await Bun.write(join(cacheDir(), `${session.id}.txt`), body);
+}
+
+/** The source mtime a cache entry was built from, or null if absent/unreadable. */
+export async function cachedSourceMtime(sessionId: string): Promise<number | null> {
+  const file = Bun.file(join(cacheDir(), `${sessionId}.txt`));
+  if (!(await file.exists())) return null;
+  const firstLine = (await file.text()).split("\n", 1)[0] ?? "";
+  if (!firstLine.startsWith(HEADER)) return null; // pre-header entry — rebuild
+  const value = Number(firstLine.slice(HEADER.length));
+  return Number.isFinite(value) ? value : null;
 }
 
 export async function readCacheEntry(sessionId: string): Promise<CacheLine[]> {
@@ -57,6 +76,7 @@ export async function readCacheEntry(sessionId: string): Promise<CacheLine[]> {
   const lines: CacheLine[] = [];
   for (const raw of text.split("\n")) {
     if (!raw.trim()) continue;
+    if (raw.startsWith(HEADER)) continue; // metadata, not a searchable line
     const tab1 = raw.indexOf("\t");
     const tab2 = raw.indexOf("\t", tab1 + 1);
     if (tab1 < 0 || tab2 < 0) continue;
@@ -77,19 +97,11 @@ export async function refreshCache(projectsDir?: string): Promise<number> {
   await mkdir(cacheDir(), { recursive: true });
   let rebuilt = 0;
   for (const s of sessions) {
-    const target = join(cacheDir(), `${s.id}.txt`);
-    let cachedAt = 0;
-    try {
-      cachedAt = (await stat(target)).mtimeMs;
-    } catch {
-      cachedAt = 0; // absent -> rebuild
-    }
-    // >= rather than >: mtime resolution on some filesystems is coarse enough
-    // that a transcript rewritten in the same tick as the previous cache build
-    // reads as "not newer" under strict >, leaving a stale cache that never
-    // heals itself. A tie is treated as "rebuild" -- an occasional redundant
-    // rebuild is cheap; a silently stale cache is not.
-    if (s.mtimeMs >= cachedAt) {
+    // Exact comparison against the mtime the entry was actually built from.
+    // No tie ambiguity, because we are not comparing two independently
+    // timestamped files -- the threshold is recorded data, not a stat() call.
+    const builtFrom = await cachedSourceMtime(s.id);
+    if (builtFrom !== s.mtimeMs) {
       try {
         await buildCacheEntry(s);
         rebuilt++;
