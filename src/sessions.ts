@@ -29,35 +29,40 @@ const decodeCache = new Map<string, string>();
  * ".../controller/type" or ".../controller-type". A naive global replace picks
  * the wrong one for ~41% of real project dirs on this machine.
  *
- * Resolution: walk the filesystem greedily, preferring the LONGEST candidate
- * segment that actually exists on disk. Falls back to the naive split for path
- * components that no longer exist (deleted projects).
+ * Resolution: search the filesystem, trying the LONGEST candidate segment
+ * first but BACKTRACKING when the remainder cannot be fully resolved. Falls
+ * back to the naive split when no complete resolution exists (deleted project).
+ *
+ * `exists` is injectable so tests can supply a virtual filesystem instead of
+ * writing directories into the real home tree.
  */
-function resolveEncodedPath(dirName: string): string {
+export function resolveEncodedPath(
+  dirName: string,
+  exists: (p: string) => boolean = existsSync
+): string {
   const tokens = dirName.replace(/^-/, "").split("-");
-  let path = "";
-  let i = 0;
-  while (i < tokens.length) {
-    let matched = "";
-    let matchedEnd = i;
-    // Prefer the longest joined candidate that exists as a real directory.
+
+  /**
+   * Returns a fully-resolved path from position i, or null if none exists.
+   *
+   * Backtracking is required, not a nicety: a purely greedy walk commits to a
+   * wrong split whenever a coincidentally-named sibling exists. With a real cwd
+   * of ~/github/foo/bar and an unrelated ~/github/foo-bar also on disk, greedy
+   * returns ~/github/foo-bar and never reconsiders, even though the correct
+   * nested path is fully present.
+   */
+  function walk(i: number, prefix: string): string | null {
+    if (i >= tokens.length) return prefix;
     for (let j = tokens.length; j > i; j--) {
-      const candidate = tokens.slice(i, j).join("-");
-      if (existsSync(`${path}/${candidate}`)) {
-        matched = candidate;
-        matchedEnd = j;
-        break;
-      }
+      const next = `${prefix}/${tokens.slice(i, j).join("-")}`;
+      if (!exists(next)) continue;
+      const resolved = walk(j, next);
+      if (resolved !== null) return resolved;
     }
-    if (!matched) {
-      // Nothing on disk matches — fall back to one token per segment.
-      matched = tokens[i];
-      matchedEnd = i + 1;
-    }
-    path += `/${matched}`;
-    i = matchedEnd;
+    return null;
   }
-  return path;
+
+  return walk(0, "") ?? "/" + tokens.join("/");
 }
 
 export function decodeProject(dirName: string): string {

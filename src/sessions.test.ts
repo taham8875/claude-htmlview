@@ -1,6 +1,6 @@
 // src/sessions.test.ts
 import { test, expect } from "bun:test";
-import { decodeProject, listSessions } from "./sessions";
+import { decodeProject, resolveEncodedPath, listSessions } from "./sessions";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,19 +10,29 @@ test("decodes an encoded project dir to a tilde path", () => {
   expect(decodeProject("-home-taha")).toBe("~");
 });
 
-test("preserves literal hyphens in real directory names", () => {
+// A virtual filesystem, so these tests never touch the real home tree.
+const fakeFs = (paths: string[]) => (p: string) => paths.includes(p);
+
+test("preserves a literal hyphen in a directory name", () => {
   // The encoding is lossy: "-" is both a separator and a literal character.
-  // Resolution walks the filesystem, preferring the longest existing segment.
-  // ~41% of real project dirs on this machine contain a literal hyphen.
-  const { mkdirSync } = require("node:fs");
-  const { homedir } = require("node:os");
-  const probe = `${homedir()}/github/controller-type`;
-  mkdirSync(probe, { recursive: true });
-  expect(decodeProject("-home-taha-github-controller-type")).toBe("~/github/controller-type");
+  const fs = fakeFs(["/home", "/home/taha", "/home/taha/github", "/home/taha/github/controller-type"]);
+  expect(resolveEncodedPath("-home-taha-github-controller-type", fs))
+    .toBe("/home/taha/github/controller-type");
+});
+
+test("backtracks when a longer sibling would strand the remainder", () => {
+  // Both foo-bar and foo/bar exist. Longest-first tries foo-bar, which leaves
+  // "bar" unresolvable, so it must backtrack to foo/bar. A greedy resolver
+  // without backtracking returns /a/foo-bar here and drops a path segment.
+  const fs = fakeFs(["/a", "/a/foo-bar", "/a/foo", "/a/foo/bar"]);
+  expect(resolveEncodedPath("-a-foo-bar", fs)).toBe("/a/foo-bar");
+  const nested = fakeFs(["/a", "/a/foo-bar", "/a/foo", "/a/foo/bar", "/a/foo/bar/baz"]);
+  expect(resolveEncodedPath("-a-foo-bar-baz", nested)).toBe("/a/foo/bar/baz");
 });
 
 test("falls back to naive splitting when nothing exists on disk", () => {
-  expect(decodeProject("-nonexistent-alpha-beta")).toBe("/nonexistent/alpha/beta");
+  expect(resolveEncodedPath("-nonexistent-alpha-beta", fakeFs([])))
+    .toBe("/nonexistent/alpha/beta");
 });
 
 async function fixtureDir() {
