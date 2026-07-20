@@ -41,12 +41,6 @@ export function resolveEncodedPath(
   exists: (p: string) => boolean = existsSync
 ): string {
   const tokens = dirName.replace(/^-/, "").split("-");
-  /**
-   * Memo on (i, prefix). Without it the search is O(2^n): measured against an
-   * adversarial filesystem, 24 tokens took 10.6s and 16.7M calls, growing
-   * ~2^(n-1). The memo collapses that to polynomial by never re-exploring a
-   * position already known to fail.
-   */
   // Hard budget on filesystem probes. A memo keyed on (i, prefix) does NOT
   // help: every distinct split reaching position i carries a different prefix,
   // so keys are near-unique and it almost never hits. The subproblem genuinely
