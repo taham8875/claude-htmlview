@@ -296,14 +296,14 @@ Every shape that broke a naive parser, verified present in real data.
 {"type":"user","uuid":"n1","timestamp":"2026-07-20T09:00:01.000Z","isSidechain":false,"message":{"role":"user","content":"<task-notification>\n<task-id>abc</task-id>\n</task-notification>"}}
 {"type":"user","uuid":"n2","timestamp":"2026-07-20T09:00:02.000Z","isSidechain":false,"message":{"role":"user","content":"<system-reminder>background context</system-reminder>"}}
 {"type":"user","uuid":"u1","timestamp":"2026-07-20T09:00:03.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"real question"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUg=="}}]}}
-{"type":"assistant","uuid":"a1","timestamp":"2026-07-20T09:00:04.000Z","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"part one"}]}}
-{"type":"assistant","uuid":"a2","timestamp":"2026-07-20T09:00:05.000Z","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"part one"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-07-20T09:00:04.000Z","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":"considering","signature":"sig"},{"type":"text","text":"part one"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-07-20T09:00:05.000Z","isSidechain":false,"message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"part two"}]}}
 {"type":"assistant","uuid":"a3","timestamp":"2026-07-20T09:00:06.000Z","isSidechain":false,"message":{"id":"msg_2","role":"assistant","content":[{"type":"tool_use","id":"toolu_9","name":"Read","input":{"file_path":"/tmp/x.txt"}}]}}
 {"type":"user","uuid":"u9","timestamp":"2026-07-20T09:00:07.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":[{"type":"text","text":"file body"}]}]}}
 {"type":"some-future-entry-type","uuid":"f1","timestamp":"2026-07-20T09:00:08.000Z","payload":{"whatever":true}}
 ```
 
-This covers, in order: ignored entry types; `isMeta` injection; `<task-notification>` string; `<system-reminder>` string; a real user message with an image block; two assistant entries sharing `msg_1` (dedupe); a `tool_use` whose `tool_result.content` is an **array**; and an unknown entry type.
+This covers, in order: ignored entry types; `isMeta` injection; `<task-notification>` string; `<system-reminder>` string; a real user message with an image block; **two assistant entries sharing `msg_1` carrying *different* blocks** (the streamed-message case — both must be kept, never deduped); a `tool_use` whose `tool_result.content` is an **array**; and an unknown entry type.
 
 - [ ] **Step 4: Write `src/fixtures/README.md`**
 
@@ -434,12 +434,17 @@ test("ignores harness-injected string content", async () => {
   expect(all).toContain("real question");
 });
 
-test("deduplicates assistant blocks sharing a message id", async () => {
+test("concatenates blocks across entries sharing a message id", async () => {
+  // Verified against the real corpus: one streamed message is split across
+  // several JSONL lines under one message.id, each carrying the NEXT block.
+  // 6388 such repeats carry differing content; zero carry identical content.
+  // Deduping here discarded ~83% of all assistant blocks.
   const p = await load("edge");
-  const texts = p.turns[0].blocks.filter(
-    (b) => b.kind === "text" && (b as any).text === "part one"
-  );
-  expect(texts.length).toBe(1);
+  const kinds = p.turns[0].blocks.map((b) => b.kind);
+  expect(kinds).toContain("thinking");
+  expect(kinds).toContain("text");
+  const texts = p.turns[0].blocks.filter((b) => b.kind === "text") as any[];
+  expect(texts.map((t) => t.text)).toEqual(["part one", "part two"]);
 });
 
 test("handles array-valued tool_result content", async () => {
@@ -450,10 +455,18 @@ test("handles array-valued tool_result content", async () => {
   expect(tool.result).toContain("file body");
 });
 
-test("represents images without base64 payload", async () => {
+test("represents a user-submitted image as a placeholder block", async () => {
+  // 88 real user image blocks across 20 sessions — a pasted screenshot must be
+  // visible as *something*, not silently dropped.
   const p = await load("edge");
-  const json = JSON.stringify(p);
-  expect(json).not.toContain("iVBORw0KGgo");
+  const turn = p.turns.find((t) => t.userText?.includes("real question"));
+  expect(turn).toBeDefined();
+  expect(turn!.blocks.some((b) => b.kind === "image")).toBe(true);
+});
+
+test("never carries base64 payload into parser output", async () => {
+  const p = await load("edge");
+  expect(JSON.stringify(p)).not.toContain("iVBORw0KGgo");
 });
 
 test("surfaces unknown entry types as placeholders", async () => {
@@ -552,13 +565,13 @@ function userText(entry: any): string {
 export function parseTranscript(jsonl: string): Parsed {
   let title: string | null = null;
   const turns: Turn[] = [];
-  const seenMessageIds = new Set<string>();
   const pendingTools = new Map<string, { kind: "tool" } & Record<string, any>>();
 
   let current: Turn | null = null;
-  const startTurn = (text: string | null, ts: string | null) => {
+  const startTurn = (text: string | null, ts: string | null): Turn => {
     current = { index: turns.length, userText: text, blocks: [], timestamp: ts };
     turns.push(current);
+    return current;
   };
   /** Blocks arriving before any user message still need a home. */
   const ensureTurn = (ts: string | null) => {
@@ -605,18 +618,25 @@ export function parseTranscript(jsonl: string): Parsed {
         }
       }
       if (isHumanMessage(entry)) {
-        startTurn(userText(entry), entry.timestamp ?? null);
+        const turn = startTurn(userText(entry), entry.timestamp ?? null);
+        // A pasted screenshot must be visible as *something*. 88 real user
+        // image blocks across 20 sessions; base64 never carried forward.
+        if (Array.isArray(content)) {
+          for (const b of content) {
+            if (b?.type === "image") turn.blocks.push({ kind: "image" });
+          }
+        }
       }
       continue;
     }
 
     // type === "assistant"
+    //
+    // Do NOT dedupe by message.id. One streamed message is written across
+    // several lines under a single id, each carrying the next content block.
+    // Verified: 6388 id-repeats carry differing content, zero carry identical
+    // content. Keep-first dedupe discarded ~83% of all assistant blocks.
     const msg = entry.message;
-    const msgId = msg?.id;
-    if (typeof msgId === "string") {
-      if (seenMessageIds.has(msgId)) continue; // duplicate emission of the same message
-      seenMessageIds.add(msgId);
-    }
     const turn = ensureTurn(entry.timestamp ?? null);
     const blocks = Array.isArray(msg?.content) ? msg.content : [];
     for (const b of blocks) {

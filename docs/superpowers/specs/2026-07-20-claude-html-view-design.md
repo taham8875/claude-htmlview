@@ -61,7 +61,7 @@ The server never writes to `~/.claude/projects`, never modifies `settings.json`,
 
 | Unit | Responsibility | Depends on |
 |---|---|---|
-| `transcript.ts` | JSONL -> normalized turn objects (dedupe by `message.id`, group text/tool/thinking blocks) | nothing |
+| `transcript.ts` | JSONL -> normalized turn objects (concatenate blocks across entries sharing a `message.id`) | nothing |
 | `index.ts` | scan projects dir; list sessions with title, project, mtime, turn count | `transcript.ts` |
 | `normalize.ts` | Arabic + Latin text normalization for search | nothing |
 | `search.ts` | maintain derived text cache; scan it for queries | `transcript.ts`, `normalize.ts` |
@@ -100,6 +100,16 @@ Both are excluded from turn boundaries, from search cache, and from title deriva
 **Truncation threshold is justified by data:** the largest observed `tool_result` string is 46,331 bytes. The 4KB cap is a real requirement, not a guess.
 
 **Block types observed:** assistant → `tool_use` (5059), `thinking` (3760), `text` (3308). User → `tool_result` (5059), `text` (220), `image` (100). Images are base64 and must never be inlined into the search cache.
+
+> **Entries sharing a `message.id` are NOT duplicates. Never dedupe by it.**
+>
+> One streamed assistant message is written across *several* JSONL lines, each carrying the next content block — thinking on one line, the `tool_use` that followed it on the next, all under the same `message.id`. Measured across the corpus: **6,388 message-id repeats carry differing content; zero carry identical content.**
+>
+> An earlier draft of this spec said to "dedupe by `message.id`". That was wrong, and it was a misreading: the advice it came from concerns **token accounting** — `usage` fields are repeated on every line of the same message, so *summing* them double-counts. It says nothing about content. Applied to content it is catastrophic: a keep-first parser retained 2,087 of 12,293 assistant blocks, silently discarding **~83%** of what Claude said.
+>
+> Correct behaviour: append every content block in file order. No dedupe.
+
+**User-submitted images are real and must be represented:** 88 image blocks across 20 sessions, in ordinary user messages (not `isMeta` injections). They render as a placeholder — never with base64 carried forward — so a pasted screenshot is visible as *something* rather than vanishing.
 
 **Unparseable lines:** zero across all complete files, confirming malformed lines only occur on the live file being appended to. The skip-and-continue rule remains required.
 
