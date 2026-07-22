@@ -56,6 +56,56 @@ code, a, strong {
   unicode-bidi: isolate;
 }
 
+/* Tables.
+   Markdown tables arrive completely unstyled, which renders them as columns of
+   text running together with 1px of browser-default padding -- unreadable once
+   a cell holds more than a word.
+
+   Note what is deliberately absent: any physical direction. Padding uses the
+   logical `block`/`inline` axes and the header underline uses border-block-end,
+   so an RTL table (dir="auto" on <table>, set in bidi.js) mirrors correctly
+   without a second set of rules. */
+.turn table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 14px 0;
+  font-size: 14px;
+  /* Wide tables scroll themselves rather than stretching the page. */
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.turn th,
+.turn td {
+  border: 1px solid var(--line);
+  padding: 7px 11px;
+  /* Rule 5 again: follows dir, so RTL cells align right with no extra rule. */
+  text-align: start;
+  vertical-align: top;
+}
+
+.turn th {
+  background: var(--user-bg);
+  font-weight: 600;
+  /* A heavier rule under the header row separates it from the body at a
+     glance, which matters most in the wide tables that need it. */
+  border-block-end: 2px solid var(--line);
+}
+
+/* Zebra striping carries the eye across a wide row. Subtle enough not to
+   compete with the accent colour used for links and matches. */
+.turn tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg) 94%, var(--fg) 6%);
+}
+
+/* A code block inside a cell should not inherit the cell's outer padding
+   again, or narrow columns lose most of their width to whitespace. */
+.turn td pre {
+  margin: 4px 0;
+  padding: 8px 10px;
+}
+
 /* Rule 2's declarative half: code is always LTR, and never wraps direction. */
 pre {
   direction: ltr;
