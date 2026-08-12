@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun (server, test runner, TypeScript), vanilla JS + vendored `marked.js` (client), zero npm dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-07-20-claude-html-view-design.md`
+**Spec:** `docs/design.md`
 
 > ## The code in this plan is the ORIGINAL DESIGN, not the shipped implementation
 >
@@ -146,7 +146,7 @@ Reads `~/.claude/projects` **read-only**. Writes only under `~/.claude/htmlview/
 
 ## Design
 
-See `docs/superpowers/specs/2026-07-20-claude-html-view-design.md`.
+See `docs/design.md`.
 ```
 
 - [ ] **Step 6: Commit**

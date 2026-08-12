@@ -1,119 +1,148 @@
 # claude-htmlview
 
-A local Bun web server that reads Claude Code session transcripts from
-`~/.claude/projects` — **read-only** — and renders them in a browser.
+A local, read-only web viewer for [Claude Code](https://claude.com/claude-code)
+session transcripts. It reads `~/.claude/projects` and renders your sessions in
+a browser, with correct mixed Arabic/English rendering, full-text search, and
+live updates while a session is running.
 
 It exists to solve two concrete problems:
 
-1. **Mixed Arabic/English renders wrongly in terminals.** Terminal bidi
-   handling breaks on mixed-direction text (RTL words next to LTR code,
-   punctuation, numbers). This server applies its own bidi rules to render
-   the same content correctly in a browser.
-2. **HTML artifacts get thrown away.** Claude Code can produce HTML
-   artifacts during a session, but there's nowhere for them to persist and
-   be browsed later. This server hosts a cross-linked library of them.
+1. **Mixed Arabic/English renders wrongly in terminals.** Terminal bidi handling
+   breaks on mixed-direction text — RTL words next to LTR code, punctuation, and
+   numbers. This server applies its own bidi rules so the same content reads
+   correctly in a browser.
+2. **HTML artifacts get thrown away.** Claude Code can produce HTML artifacts
+   during a session, but there is nowhere for them to persist and be browsed
+   later. This server hosts a cross-linked library of them.
 
-## Run
+Nothing leaves your machine: the server binds to `127.0.0.1` only, and never
+writes to `~/.claude/projects`.
+
+## Requirements
+
+- [Bun](https://bun.sh) 1.1 or newer. No Node, no build step.
+- Claude Code, with at least one session recorded under `~/.claude/projects`.
+
+## Install and run
 
 ```bash
-bun run start                # http://127.0.0.1:7317
-bun run start -- --port 8080 # pick a different port
+git clone https://github.com/taham8875/claude-htmlview.git
+cd claude-htmlview
+bun install          # dev types only; the server itself has no dependencies
+bun run start        # http://127.0.0.1:7317
 ```
 
-Pin `http://127.0.0.1:7317/live` — it redirects to whichever session was
-most recently active, so it's the one link worth bookmarking.
+If the port is taken, the server walks up to the next 20 ports rather than
+crashing. To pick one yourself:
+
+```bash
+bun run start -- --port 8080
+```
+
+Pin `http://127.0.0.1:7317/live` — it redirects to whichever session was most
+recently active, so it is the one link worth bookmarking.
+
+## Using it
+
+- **`/`** — the index. Opens on the most recently active project, with the rest
+  in a side rail. The selection lives in the URL (`/?project=<encoded-project>`,
+  or `/?project=*` for every session on the machine), so a filtered index is
+  bookmarkable and survives back/forward.
+- **`/s/<session-id>`** — one transcript. Loads the last 50 turns with a "load
+  earlier turns" control; tool calls are collapsed by default.
+- **`/search?q=...`** — full-text search across human and assistant prose.
+  Arabic-aware: tashkeel, tatweel, alef forms, and Arabic-Indic digits are all
+  normalized, so `مشكله` matches `مُشْكِلَة`.
+- **`/live`** — redirects to the most recently active session.
+- **`/artifacts`** — the artifact library (see below).
+
+While a session is running, the open page updates itself over SSE. If you have
+scrolled up or paged back through history, the update is held behind a "new
+activity" pill instead of yanking you to the bottom.
+
+## Configuration
 
 Reads `~/.claude/projects` **read-only**. All writes go under
-`~/.claude/htmlview/` (derived search cache + artifact library), split across
-two independently overridable directories — useful for pointing either at a
-different location or isolating them in tests:
+`~/.claude/htmlview/`, split across two independently overridable directories —
+useful for pointing either at a different location, or isolating them in tests:
 
-- `HTMLVIEW_CACHE_DIR` — the derived search cache. Defaults to
-  `~/.claude/htmlview/cache`.
-- `HTMLVIEW_ARTIFACTS_DIR` — the artifact library (see below). Defaults to
-  `~/.claude/htmlview/artifacts`.
+| Variable | Purpose | Default |
+|---|---|---|
+| `HTMLVIEW_CACHE_DIR` | Derived full-text search cache | `~/.claude/htmlview/cache` |
+| `HTMLVIEW_ARTIFACTS_DIR` | Artifact library | `~/.claude/htmlview/artifacts` |
 
-## Measured facts
-
-Taken from a full verification pass on 2026-07-20, against the real
-`~/.claude/projects` corpus on this machine. Numbers will differ on other
-machines/corpora — these are not targets, just what was actually observed.
-
-- **Tests:** `bun test` → 107 pass, 0 fail, 220 `expect()` calls, ~2.4s.
-  Repeated 6 times total (1 + 5 extra runs); 0 failures across all 6 runs.
-- **Zero dependencies:** `package.json` has no `dependencies` or
-  `devDependencies`; no `node_modules` directory exists.
-- **Sessions indexed:** `/api/sessions` returned **88** sessions from the
-  real corpus.
-- **Search cache:** `~/.claude/htmlview/cache` holds **93** entries (a few
-  more than the current 88 live sessions — the cache doesn't prune entries
-  for sessions that have since been removed).
-- **Startup time:** ~62ms from process start to the server accepting
-  connections (warm cache, no new sessions to index).
-- **Binding:** confirmed via `ss -ltnp | grep 7317` → `127.0.0.1:7317` only,
-  never `0.0.0.0` or `*`.
-- **Route smoke test** against the real corpus:
-
-  | Route | Status | Time |
-  |---|---|---|
-  | `GET /` | 200 | ~3ms |
-  | `GET /api/sessions` | 200 | ~343ms |
-  | `GET /live` | 302 | ~304ms |
-  | `GET /api/search?q=docmost` | 200 | ~363ms (2 hits) |
-  | `GET /api/artifacts` | 200 | <1ms |
-
-## Design
-
-See `docs/superpowers/specs/2026-07-20-claude-html-view-design.md`.
+The search cache is derived data — deleting it only costs one re-index.
 
 ## Artifact library
 
-The `htmlview-artifact` skill (`~/.claude/skills/htmlview-artifact`) writes
-self-contained HTML artifacts to:
+Artifacts are self-contained HTML pages written to:
 
 ```
 ~/.claude/htmlview/artifacts/<encoded-project>/<YYYY-MM-DD-HHmm>-<slug>.html
 ```
 
-`<encoded-project>` is the working directory with `/` replaced by `-`,
-matching Claude Code's own project-directory convention. Browse the full
-library at `/artifacts`; a single artifact is served at
+`<encoded-project>` is the working directory with `/` replaced by `-`, matching
+Claude Code's own project-directory convention. Browse the full library at
+`/artifacts`; a single artifact is served at
 `/artifact/<encoded-project>/<file>.html`.
 
-## Thinking blocks
+To let Claude Code write them for you, install the bundled skill:
 
-Thinking blocks are never rendered, because Claude Code does not persist
-thinking content to the transcript. A direct scan of the real corpus
-(`~/.claude/projects/*/*.jsonl`, top-level session files only, as of this
-verification pass, re-measured 2026-07-20) found **3,968 thinking blocks,
-all empty** — each has `"thinking": ""` and only a long opaque `signature`
-field. The corpus grows over time, so treat this as indicative rather than
-an exact figure. Rendering an empty block would just be visual noise, so the
-client skips them.
+```bash
+mkdir -p ~/.claude/skills
+cp -r skills/htmlview-artifact ~/.claude/skills/
+```
 
-## What it does not do
+## Security
 
-These were deliberately scoped out. Recorded here so they aren't
-re-litigated by a future reader:
+This serves your transcripts, which routinely contain file contents, paths, and
+whatever secrets happen to have passed through a session. Accordingly:
 
-- **Browser-side input.** The client is read-only; you can't reply to a
-  session from the browser. Permitted as a future extension, but out of
-  scope for v1 — Channels would be the natural route in if it's ever added.
-- **Server-side markdown rendering.** Markdown IS rendered — client-side, in
-  the browser, via `marked`. What's deferred is a server-side
-  markdown-to-HTML pipeline, which would only be needed to export a
-  standalone rendered turn (e.g. as a static HTML file); the raw markdown is
-  stored either way, so adding that later needs no data migration.
-- **Search over tool inputs/outputs.** The search cache indexes human and
-  assistant prose only. Tool calls and their results are not searchable.
-- **Ranked search.** Results are returned in match order, not scored or
-  ranked by relevance.
-- **Subagent transcript viewing.** Only top-level session transcripts are
-  indexed and rendered; subagent transcripts (`*/subagents/*.jsonl`) are not
-  surfaced in the UI.
-- **Thread → artifact inline cross-links.** Task 12 implements the artifact
-  library listing (artifact → project), but there's no reverse link from a
-  transcript turn back to an artifact it produced — the transcript carries
-  no reliable signal to make that link. Recording it would require the
-  skill to write a sidecar manifest; treated as a scoped follow-up, not a
-  v1 blocker.
+- The listener is bound to `127.0.0.1` and never `0.0.0.0`. There is no flag to
+  change this.
+- Static files and artifacts are contained twice: lexically, and again after
+  `realpath()`, because `stat()` follows symlinks past a lexical check. A
+  symlink planted inside the served directory cannot read a file outside it.
+  Both paths have regression tests.
+- Session ids are validated against a strict charset before they reach a glob
+  pattern.
+
+There is no authentication, because there is no remote access to authenticate.
+Do not put this behind a reverse proxy.
+
+## Development
+
+```bash
+bun test         # 139 tests
+bun run typecheck
+```
+
+The server has zero runtime dependencies. `bun install` pulls only `@types/bun`
+for typechecking. `public/vendor/marked.min.js` is vendored (MIT) so the client
+needs no CDN.
+
+Design notes and the original spec live in `docs/`.
+
+## Limitations
+
+Deliberately out of scope, recorded so they are not re-litigated:
+
+- **No browser-side input.** The client is read-only; you cannot reply to a
+  session from the browser.
+- **No server-side markdown rendering.** Markdown is rendered client-side via
+  `marked`. A server-side pipeline would only be needed to export a standalone
+  rendered turn.
+- **Search covers prose only.** Tool inputs and outputs are not indexed.
+- **No ranking.** Results come back in match order, not scored by relevance.
+- **No subagent transcripts.** Only top-level sessions are indexed; anything
+  under `<session>/subagents/` is skipped.
+- **No thread → artifact links.** The transcript carries no reliable signal
+  connecting a turn to an artifact it produced.
+
+**Thinking blocks are never rendered**, because Claude Code does not persist
+thinking content: every thinking block in the transcript has `"thinking": ""`
+and only an opaque `signature`. Rendering an empty block would be visual noise.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
