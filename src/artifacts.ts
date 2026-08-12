@@ -1,4 +1,3 @@
-// src/artifacts.ts
 import { Glob } from "bun";
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";

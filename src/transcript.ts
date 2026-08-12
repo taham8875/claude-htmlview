@@ -1,4 +1,3 @@
-// src/transcript.ts
 
 export type Block =
   | { kind: "text"; text: string }
@@ -14,7 +13,13 @@ export type Turn = {
   timestamp: string | null;
 };
 
-export type Parsed = { title: string | null; turns: Turn[] };
+/**
+ * `lastTimestamp` is the newest timestamp carried by *any* entry, including the
+ * system and metadata lines that never become turns. It is the session's real
+ * last-activity time; the file's mtime is not, because a live `claude` process
+ * rewrites its own transcript periodically without appending anything.
+ */
+export type Parsed = { title: string | null; turns: Turn[]; lastTimestamp: string | null };
 
 /** Entry types we consume. Anything else is either ignored or flagged unknown. */
 const CONSUMED = new Set(["user", "assistant", "ai-title"]);
@@ -72,6 +77,7 @@ function userText(entry: any): string {
 
 export function parseTranscript(jsonl: string): Parsed {
   let title: string | null = null;
+  let lastTimestamp: string | null = null;
   const turns: Turn[] = [];
   const pendingTools = new Map<string, { kind: "tool" } & Record<string, any>>();
 
@@ -95,6 +101,11 @@ export function parseTranscript(jsonl: string): Parsed {
     } catch {
       continue; // half-written final line of a live file — expected, never fatal
     }
+
+    // Before any type dispatch: every `continue` below would otherwise skip an
+    // entry that still counts as activity. Last-wins rather than max, because
+    // the file is append-only and its entries are already in order.
+    if (typeof entry?.timestamp === "string") lastTimestamp = entry.timestamp;
 
     const type = entry?.type;
 
@@ -138,8 +149,6 @@ export function parseTranscript(jsonl: string): Parsed {
       continue;
     }
 
-    // type === "assistant"
-    //
     // Do NOT dedupe by message.id. One streamed message is written across
     // several lines under a single id, each carrying the next content block.
     // Verified: 6388 id-repeats carry differing content, zero carry identical
@@ -174,5 +183,5 @@ export function parseTranscript(jsonl: string): Parsed {
     }
   }
 
-  return { title, turns };
+  return { title, turns, lastTimestamp };
 }

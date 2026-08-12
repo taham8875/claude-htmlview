@@ -1,4 +1,3 @@
-// src/watch.ts
 import { watch, type FSWatcher } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";

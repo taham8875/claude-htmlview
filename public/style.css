@@ -1,25 +1,51 @@
 /* public/style.css
    Rules 4-6 of the six bidi rules live here. No external resources: every font
-   named is verified installed locally (fc-list, checked at implementation
-   time: Noto Sans Arabic UI, Noto Sans Arabic, Iosevka NFM, DejaVu Sans Mono
-   all present). */
+   named is verified installed locally (fc-list/fc-match, re-checked 2026-08-04:
+   Noto Sans Arabic UI, Noto Sans Arabic, Iosevka NFM, JetBrainsMono NFM,
+   DejaVu Sans Mono all present).
+
+   Direction: a printed transcript. Prose in the reading face, monospace for the
+   machinery around it (nav, turn markers, tool calls, paths, buttons), warm ink
+   on warm paper. Every spacing/border property is logical, never physical, so an
+   RTL turn mirrors without a second rule. */
 
 :root {
+  /* Prose is sans, and the Arabic face is Noto Sans Arabic UI. A serif Latin
+     (Charter) with a naskh Arabic was tried and rejected: naskh's heavy strokes
+     and stacked diacritics read badly for technical prose, which is most of this
+     corpus. Latin follows Arabic here rather than the other way round -- a line
+     mixing the two must not switch skeletons mid-sentence. */
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Arabic UI",
     "Noto Sans Arabic", sans-serif;
-  --mono: "Iosevka NFM", "DejaVu Sans Mono", ui-monospace, monospace;
-  --bg: #0f1115;
-  --fg: #e6e6e6;
-  --muted: #8b93a7;
-  --line: #232733;
-  --accent: #7aa2f7;
-  --user-bg: #171a21;
+  /* The Arabic face sits inside the mono stack on purpose: per-glyph fallback
+     keeps Latin on Iosevka while Arabic in chrome text gets a real Arabic face
+     instead of DejaVu Sans Mono's. */
+  --mono: "Iosevka NFM", "JetBrainsMono NFM", "Noto Sans Arabic UI",
+    "DejaVu Sans Mono", ui-monospace, monospace;
+
+  --bg: #0d100f;
+  --surface: #151a18;
+  --fg: #e9e5da;
+  --muted: #8b9089;
+  --line: #232a27;
+  --line-soft: #1a201e;
+  --accent: #d99a4e;
+  --accent-ink: #14100a;
+
+  --measure: 50rem;
+  --radius: 7px;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #fbfbfd; --fg: #1a1a1a; --muted: #5c6478;
-    --line: #e2e5ee; --user-bg: #f0f2f7;
+    --bg: #f8f5ed;
+    --surface: #f0ebde;
+    --fg: #1c1b17;
+    --muted: #6a665b;
+    --line: #ddd5c3;
+    --line-soft: #e8e1d2;
+    --accent: #9c5c1b;
+    --accent-ink: #fdf9f0;
   }
 }
 
@@ -30,8 +56,9 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: 16px;
+  line-height: 1.72;
+  scrollbar-color: var(--line) transparent;
   /* Rule 5: alignment follows dir automatically. Never text-align with a
      physical direction (left/right) -- that would fight dir="auto". */
   text-align: start;
@@ -39,12 +66,11 @@ body {
 
 /* Rule 6: Arabic diacritics and taller ascenders collide at Latin leading.
    Two selectors, not one, and that's deliberate:
-     - [dir="rtl"] matches only a *literal* dir="rtl" attribute.
-     - :dir(rtl) matches an element's *resolved* directionality, which is
-       what dir="auto" (Rule 1, set by bidi.js on every block) actually
-       produces for Arabic content. Without :dir(rtl), this rule would be
-       silently dead: every block in this app carries dir="auto", never a
-       literal dir="rtl", so [dir="rtl"] alone never matches anything. */
+     - [dir="rtl"] matches only a *literal* dir="rtl" attribute, which is what
+       Rule 1 now writes on a block that counts as sufficiently Arabic.
+     - :dir(rtl) matches an element's *resolved* directionality, and is what
+       catches the blocks Rule 1 leaves on dir="auto" (nothing strongly
+       directional to count). Neither selector covers the other. */
 [dir="rtl"], :dir(rtl) {
   line-height: 1.95;
   letter-spacing: 0;
@@ -56,8 +82,73 @@ code, a, strong {
   unicode-bidi: isolate;
 }
 
-/* Tables.
-   Markdown tables arrive completely unstyled, which renders them as columns of
+/* ---- typography ---------------------------------------------------------- */
+
+h1, h2, h3, h4 { line-height: 1.35; font-weight: 600; }
+h1 { font-size: 26px; margin: 0 0 2px; }
+
+/* Headings written *inside* a response are prose and must stay that way -- the
+   chrome style below is a class, not a bare h2, or every "## heading" in a
+   transcript would come out uppercased and tracked like a nav label. */
+.turn h1 { font-size: 21px; margin: 22px 0 6px; }
+.turn h2 { font-size: 18.5px; margin: 20px 0 6px; }
+.turn h3 { font-size: 16.5px; margin: 18px 0 4px; }
+.turn h4 { font-size: 15px; margin: 16px 0 4px; color: var(--muted); }
+
+/* Project group headings are chrome, not prose: mono, small, tracked wide, with
+   a hairline running out to the edge of the column. */
+h2.group {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 34px 0 4px;
+  padding-block-end: 7px;
+  border-block-end: 1px solid var(--line);
+}
+h2.group:first-child { margin-block-start: 6px; }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+blockquote {
+  margin: 14px 0;
+  padding-inline-start: 14px;
+  border-inline-start: 2px solid var(--line);
+  color: var(--muted);
+}
+
+hr { border: 0; border-block-start: 1px solid var(--line); margin: 22px 0; }
+
+::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+
+/* Rule 2's declarative half: code is always LTR, and never wraps direction. */
+pre {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+code { font-family: var(--mono); font-size: 0.88em; }
+pre code { font-size: inherit; }
+/* Inline code needs to read as a token, not as body text in another font. */
+:not(pre) > code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* ---- tables -------------------------------------------------------------- */
+
+/* Markdown tables arrive completely unstyled, which renders them as columns of
    text running together with 1px of browser-default padding -- unreadable once
    a cell holds more than a word.
 
@@ -86,8 +177,11 @@ code, a, strong {
 }
 
 .turn th {
-  background: var(--user-bg);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.03em;
   /* A heavier rule under the header row separates it from the body at a
      glance, which matters most in the wide tables that need it. */
   border-block-end: 2px solid var(--line);
@@ -106,99 +200,332 @@ code, a, strong {
   padding: 8px 10px;
 }
 
-/* Rule 2's declarative half: code is always LTR, and never wraps direction. */
-pre {
-  direction: ltr;
-  unicode-bidi: isolate;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.55;
-  overflow-x: auto;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg) 88%, #fff 12%);
+/* ---- chrome -------------------------------------------------------------- */
+
+.wrap { max-width: var(--measure); margin: 0 auto; padding: 26px 22px 140px; }
+/* The index needs room for its project rail; reading views keep the measure. */
+.wrap.wide { max-width: 70rem; }
+
+/* ---- index: project rail + session pane ---------------------------------- */
+
+.index-layout {
+  display: grid;
+  grid-template-columns: 15.5rem minmax(0, 1fr);
+  gap: 30px;
+  align-items: start;
 }
 
-code { font-family: var(--mono); font-size: 0.92em; }
-pre code { font-size: inherit; }
+.projects {
+  position: sticky;
+  top: 62px; /* clears the sticky header */
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.projects a {
+  display: flex;
+  gap: 0; /* the path's own "/" is the separator */
+  align-items: baseline;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border-inline-start: 2px solid transparent;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+.projects a:hover { background: var(--surface); color: var(--fg); }
+.projects a.active {
+  background: var(--surface);
+  color: var(--fg);
+  border-inline-start-color: var(--accent);
+}
+/* The leading directories are context; the project name is the thing you scan
+   for, so it keeps full contrast while the path fades back. */
+.projects .p-dir {
+  opacity: 0.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 3ch; /* shrinks first, but never vanishes entirely */
+}
+.projects .p-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.projects .count {
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
+  font-size: 10.5px;
+  opacity: 0.55;
+}
 
-.wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 120px; }
+/* Below the breakpoint the rail stops being a rail: it sits above the list and
+   scrolls with the page, so the sessions keep the full width. */
+@media (max-width: 900px) {
+  .index-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .projects {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-block-end: 8px;
+    border-block-end: 1px solid var(--line);
+  }
+  .projects a { border-inline-start: 0; border: 1px solid var(--line); }
+  .projects a.active { border-color: var(--accent); }
+}
 
 header.top {
   position: sticky; top: 0; z-index: 10;
-  display: flex; gap: 16px; align-items: center;
-  padding: 12px 20px;
-  background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--line);
+  display: flex; gap: 18px; align-items: baseline;
+  padding: 11px 22px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(10px) saturate(1.2);
+  border-block-end: 1px solid var(--line);
 }
+header.top nav { display: flex; gap: 16px; align-items: baseline; }
 header.top a { color: var(--muted); text-decoration: none; }
-header.top a:hover, header.top a.active { color: var(--fg); }
+header.top a:hover { color: var(--fg); }
+header.top a.active { color: var(--fg); }
+/* The active marker is a leading bullet rather than an underline: it survives
+   RTL mirroring and does not fight the header's baseline alignment. */
+header.top a.active::before {
+  content: "";
+  display: inline-block;
+  width: 5px; height: 5px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
 
-.turn { padding: 8px 0 20px; border-bottom: 1px solid var(--line); }
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--fg) !important;
+  margin-inline-end: 4px;
+}
+.brand span { color: var(--accent); }
+
+/* ---- turns --------------------------------------------------------------- */
+
+.turn {
+  padding: 10px 0 22px;
+  border-block-end: 1px solid var(--line-soft);
+}
 .turn:target { animation: flash 1.4s ease-out; }
 @keyframes flash {
-  from { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  from { background: color-mix(in srgb, var(--accent) 20%, transparent); }
   to { background: transparent; }
 }
 
+/* Turn marker: a printed transcript numbers its turns in the margin. Here it
+   sits above the turn, in mono, quiet enough to skim past. */
+.turn-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.75;
+  margin-block-end: 8px;
+}
+.turn-meta a { color: inherit; text-decoration: none; }
+.turn-meta a:hover { color: var(--accent); }
+
 .user {
-  background: var(--user-bg);
-  border-inline-start: 3px solid var(--accent);
-  padding: 10px 14px;
-  border-radius: 0 8px 8px 0;
-  margin-bottom: 14px;
+  background: var(--surface);
+  border-inline-start: 2px solid var(--accent);
+  padding: 11px 15px;
+  border-start-start-radius: 0;
+  border-start-end-radius: var(--radius);
+  border-end-end-radius: var(--radius);
+  border-end-start-radius: 0;
+  margin-block-end: 16px;
   white-space: pre-wrap;
 }
 
-.tool { margin: 10px 0; }
+.turn-actions {
+  display: flex;
+  gap: 8px;
+  margin-block-start: 14px;
+  /* Quiet until wanted: full strength on hover, focus, or touch (no hover). */
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+.turn:hover .turn-actions,
+.turn-actions:focus-within { opacity: 1; }
+@media (hover: none) { .turn-actions { opacity: 1; } }
+
+.copy-btn {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 11px;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.copy-btn:hover { color: var(--fg); border-color: var(--muted); }
+.copy-btn[data-state="ok"] {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.copy-btn[data-state="err"] { color: #e06c5b; border-color: #e06c5b; }
+
+/* ---- tool calls ---------------------------------------------------------- */
+
+.tool { margin: 12px 0; }
 .tool summary {
-  cursor: pointer; color: var(--muted); font-size: 13px;
-  font-family: var(--mono); padding: 4px 0;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-family: var(--mono);
+  padding: 3px 0;
+  list-style: none;
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
 }
+.tool summary::-webkit-details-marker { display: none; }
+/* Custom marker so the disclosure triangle mirrors with the text direction. */
+.tool summary::before {
+  content: "›";
+  color: var(--accent);
+  transition: transform 140ms ease;
+  display: inline-block;
+}
+.tool[open] > summary::before { transform: rotate(90deg); }
 .tool summary:hover { color: var(--fg); }
-.tool .body { padding-inline-start: 14px; border-inline-start: 1px solid var(--line); }
-
-.thinking { color: var(--muted); font-style: italic; }
-.placeholder {
-  color: var(--muted); font-family: var(--mono); font-size: 12px;
-  border: 1px dashed var(--line); border-radius: 6px; padding: 6px 10px;
+.tool-name { color: var(--fg); font-weight: 600; }
+.tool-sum {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool .body {
+  padding-inline-start: 14px;
+  margin-block-start: 6px;
+  border-inline-start: 1px solid var(--line);
 }
 
-.session-row { display: block; padding: 10px 0; border-bottom: 1px solid var(--line);
-  color: inherit; text-decoration: none; }
-.session-row:hover { background: var(--user-bg); }
-.session-row .meta { color: var(--muted); font-size: 12.5px; }
+.placeholder {
+  color: var(--muted); font-family: var(--mono); font-size: 11.5px;
+  letter-spacing: 0.04em;
+  border: 1px dashed var(--line); border-radius: 6px;
+  padding: 5px 10px; display: inline-block;
+}
 
-mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+/* ---- rows: sessions, search hits, artifacts ------------------------------ */
+
+.session-row {
+  display: block;
+  padding: 11px 12px;
+  margin-inline: -12px;
+  border-radius: var(--radius);
+  border-block-end: 1px solid var(--line-soft);
+  color: inherit;
+  text-decoration: none;
+  transition: background 120ms ease;
+}
+.session-row:hover { background: var(--surface); }
+.session-row .meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  margin-block-start: 2px;
+}
+/* An artifact row is named by its file, so the name reads in the mono voice. */
+.artifact > div:first-child {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+/* The meta line is dir="ltr" so its count and date keep their order, which means
+   `start` resolves against *its own* ltr and hugs the left edge of a right-aligned
+   RTL row. `end` is the same axis flipped -- still logical, and correct only
+   because the element is ltr inside an rtl row. */
+.session-row:dir(rtl) .meta { text-align: end; }
+
+mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
 
 input[type="search"] {
-  width: 100%; padding: 10px 12px; font: inherit; text-align: start;
-  background: var(--user-bg); color: var(--fg);
-  border: 1px solid var(--line); border-radius: 8px;
+  width: 100%; padding: 11px 14px; text-align: start;
+  font-family: var(--mono); font-size: 13.5px;
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  transition: border-color 120ms ease;
 }
+input[type="search"]:focus { border-color: var(--accent); }
 
 .muted { color: var(--muted); }
-.show-more { font: inherit; background: none; border: 0; color: var(--accent);
-  cursor: pointer; padding: 4px 0; }
+/* A project path is machinery, not prose -- it belongs in the mono voice. */
+.path {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  margin-block-end: 18px;
+}
+
+.show-more {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em;
+  background: none; border: 0; color: var(--accent);
+  cursor: pointer; padding: 6px 0;
+}
+.show-more:hover { text-decoration: underline; }
 
 #update-pill {
   position: fixed;
-  bottom: 20px;
+  bottom: 22px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
-  font: inherit;
-  font-size: 13px;
+  font-family: var(--mono);
+  font-size: 12px;
   font-weight: 600;
-  padding: 8px 16px;
-  border: 1px solid var(--line);
+  letter-spacing: 0.03em;
+  padding: 8px 18px;
+  border: 0;
   border-radius: 999px;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--accent-ink);
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 #update-pill:hover { filter: brightness(1.08); }
 #update-pill[hidden] { display: none; }
+
+/* ---- focus & motion ------------------------------------------------------ */
+
+:where(a, button, summary, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

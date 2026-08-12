@@ -6,14 +6,23 @@
     <script type="module">
       import { applyBidi } from "/bidi.js";
       document.getElementById("t").innerHTML = `
-        <p>هذه مشكلة في الكود</p>
-        <p>This is an English paragraph</p>
-        <p>افتح الملف <code>server.ts</code> ثم أعد التشغيل.</p>
+        <p id="ar">هذه مشكلة في الكود</p>
+        <p id="en">This is an English paragraph</p>
+        <p id="inline">افتح الملف <code>server.ts</code> ثم أعد التشغيل.</p>
         <pre><code>const x = 1; // مثال</code></pre>
-        <ul><li>عنصر عربي</li><li>English item</li></ul>`;
+        <ul><li>عنصر عربي</li><li>English item</li></ul>
+
+        <!-- Share cases: first-strong gets all of these wrong. -->
+        <p id="maj-minority-ar">The <code>tok_flags</code> default is 32 zeroes and we send it on every create_card call — وده غلط خالص</p>
+        <p id="maj-lead-code"><code>create_card</code> بيتبعتها صراحةً في كل مرة من غير الفلاجات دي</p>
+        <p id="maj-lead-word">Notification بعد إجابة 2، ده غلط — إحنا يعني الأنضل إننا نشيل الحقل ده</p>
+        <p id="maj-code-heavy">الـ <code>config/paymentology.php:21</code> و<code>UatPaymentologyClient.php:112</code> هما اللي بيحددوا السلوك ده</p>
+        <p id="maj-en-with-ar">The issuer rejects it — رفض — whenever the AVS check fails on our side</p>
+        <table id="maj-table"><tr><th>AVS</th><th>الوصف</th></tr>
+          <tr><td>bit 28</td><td>يوافق لو الفحص فشل، وده عكس اللي احنا عايزينه بالظبط</td></tr></table>`;
       applyBidi(document.getElementById("t"));
-      window.__dirs = [...document.querySelectorAll("p,li,pre")]
-        .map((e) => e.tagName + ":" + getComputedStyle(e).direction);
+      window.__dirs = [...document.querySelectorAll("p,li,pre,table")]
+        .map((e) => (e.id || e.tagName) + ":" + getComputedStyle(e).direction);
     </script>
   </body>
 </html>

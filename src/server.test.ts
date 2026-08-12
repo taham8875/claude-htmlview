@@ -1,6 +1,5 @@
-// src/server.test.ts
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { createServer } from "./server";
+import { createServer, SSE_HEARTBEAT_MS, BUN_IDLE_TIMEOUT_MS } from "./server";
 import { mkdtemp, mkdir, writeFile, symlink, unlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,14 +22,14 @@ afterAll(async () => {
   await rm(tmpCache, { recursive: true, force: true });
 });
 
-async function fixtureServer() {
+async function fixtureServer(opts: { heartbeatMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "htmlview-s-"));
   const proj = join(root, "-home-taha-demo");
   await mkdir(proj, { recursive: true });
   const sessionFile = join(proj, "sess-a.jsonl");
   const fixtureBody = await Bun.file("src/fixtures/basic.jsonl").text();
   await writeFile(sessionFile, fixtureBody);
-  const server = await createServer({ projectsDir: root, port: 0 });
+  const server = await createServer({ projectsDir: root, port: 0, ...opts });
   return { server, base: `http://127.0.0.1:${server.port}`, sessionFile, fixtureBody };
 }
 
@@ -149,6 +148,20 @@ test("a real static file under public/ is still served (positive control for the
   server.stop();
 });
 
+// Static assets carried no cache-control and no validator (no ETag, no
+// Last-Modified), leaving freshness entirely to browser heuristics. That makes
+// "edit public/app.js, reload" unreliable -- the client can keep running the
+// previous copy with nothing in the response telling it otherwise, which turns
+// every client-side fix into a maybe. must-revalidate on a local-only reading
+// tool costs one conditional request and removes the guesswork.
+test("static assets are served with a revalidation header so edited client JS is picked up", async () => {
+  const { server, base } = await fixtureServer();
+  const r = await fetch(`${base}/app.js`);
+  expect(r.status).toBe(200);
+  expect(r.headers.get("cache-control")).toContain("no-cache");
+  server.stop();
+});
+
 test("a symlink placed inside public/ cannot be used to read a file outside it", async () => {
   // The lexical containment check (target.startsWith(PUBLIC + sep)) passes
   // trivially here: the *symlink's own path* is under public/. Only the
@@ -262,5 +275,62 @@ test("a dead/aborted SSE client is dropped without breaking the broadcast for ot
   }
 
   await reader.cancel();
+  server.stop();
+});
+
+// Regression: /events used to send nothing between real changes, so Bun's
+// default 10s idleTimeout killed every idle SSE stream. EventSource then
+// reconnected ~2s later, and any file change landing in that dead window was
+// broadcast to zero clients and lost outright -- an open page just sat stale
+// until the reader manually reloaded. Verified empirically that writing to the
+// response resets the idle timer (a stream pinging every 2s survives past 20s,
+// an identical silent one dies at ~10s), so a periodic comment is the fix.
+test("an idle SSE stream is kept alive by heartbeat comments", async () => {
+  const { server, base } = await fixtureServer({ heartbeatMs: 50 });
+  const r = await fetch(`${base}/events`);
+  const reader = r.body!.getReader();
+  const dec = new TextDecoder();
+
+  await reader.read(); // the initial ": connected" comment
+
+  // Three heartbeats with no file change at all: without them the stream is
+  // silent and Bun tears it down.
+  for (let i = 0; i < 3; i++) {
+    const chunk = await Promise.race([
+      reader.read().then((c) => dec.decode(c.value)),
+      new Promise<string>((_, rej) => setTimeout(() => rej(new Error("no heartbeat")), 2000)),
+    ]);
+    expect(chunk).toContain(":");
+    expect(chunk).not.toContain("data:"); // a comment, not a spurious update
+  }
+
+  await reader.cancel();
+  server.stop();
+});
+
+// The heartbeat only works if it fires comfortably before the timeout it
+// exists to beat. Pinning the relationship here means bumping the interval
+// past the timeout fails the suite rather than silently resurrecting the bug.
+test("the default heartbeat interval stays well under Bun's idle timeout", () => {
+  expect(SSE_HEARTBEAT_MS).toBeLessThan(BUN_IDLE_TIMEOUT_MS / 2);
+});
+
+// The heartbeat interval must not outlive the connection: a stream that is
+// gone but still ticking leaks a timer per reconnect, and EventSource
+// reconnects for the life of the page.
+test("the heartbeat stops when the client disconnects", async () => {
+  const { server, base } = await fixtureServer({ heartbeatMs: 20 });
+  const ac = new AbortController();
+  const r = await fetch(`${base}/events`, { signal: ac.signal });
+  const reader = r.body!.getReader();
+  await reader.read();
+  ac.abort();
+  await new Promise((res) => setTimeout(res, 200)); // several heartbeat periods
+
+  // If enqueue-after-close threw out of the interval callback it would be an
+  // unhandled error, not a rejected promise anything here awaits -- so the
+  // observable assertion is that the server is still healthy afterwards.
+  const ok = await fetch(`${base}/api/sessions`);
+  expect(ok.status).toBe(200);
   server.stop();
 });

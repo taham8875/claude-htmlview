@@ -1,4 +1,3 @@
-// src/searchcache.ts
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";

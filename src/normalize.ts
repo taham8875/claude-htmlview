@@ -1,4 +1,3 @@
-// src/normalize.ts
 
 /** Tashkeel (Arabic diacritics), U+064B–U+0652, plus superscript alef U+0670. */
 const TASHKEEL = /[ً-ْٰ]/g;

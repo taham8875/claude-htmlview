@@ -1,4 +1,3 @@
-// src/watch.test.ts
 import { test, expect, afterAll } from "bun:test";
 import { watchProjects } from "./watch";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";

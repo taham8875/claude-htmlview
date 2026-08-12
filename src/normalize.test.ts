@@ -1,4 +1,3 @@
-// src/normalize.test.ts
 import { test, expect } from "bun:test";
 import { normalize } from "./normalize";
 

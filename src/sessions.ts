@@ -1,4 +1,3 @@
-// src/sessions.ts
 import { Glob } from "bun";
 import { stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -12,6 +11,9 @@ export type SessionMeta = {
   projectPath: string;
   title: string;
   turnCount: number;
+  /** Last activity, read from the transcript itself. Sort and display on this. */
+  activityMs: number;
+  /** The file's own mtime. Cache-validity input only — see activityMs. */
   mtimeMs: number;
   file: string;
 };
@@ -88,6 +90,24 @@ export function decodeProject(dirName: string): string {
   return out;
 }
 
+/**
+ * When the session was last actually active.
+ *
+ * NOT the file's mtime. Every `claude` process still holding a session open
+ * rewrites that session's .jsonl periodically without appending a turn —
+ * observed on transcripts whose newest entry was four days older than their
+ * mtime — so sorting on mtime floats idle sessions to the top and labels them
+ * fresh. The newest timestamp inside the file is the honest answer and still
+ * moves on every append.
+ *
+ * Falls back to mtime when no entry carries a timestamp (a metadata-only
+ * transcript), since an epoch-zero session would sort below everything.
+ */
+function activityOf(parsed: Parsed, mtimeMs: number): number {
+  const ms = parsed.lastTimestamp ? Date.parse(parsed.lastTimestamp) : NaN;
+  return Number.isNaN(ms) ? mtimeMs : ms;
+}
+
 function toMeta(id: string, dirName: string, file: string, mtimeMs: number, parsed: Parsed): SessionMeta {
   return {
     id,
@@ -95,6 +115,7 @@ function toMeta(id: string, dirName: string, file: string, mtimeMs: number, pars
     projectPath: dirName,
     title: parsed.title ?? parsed.turns[0]?.userText?.slice(0, 80) ?? id,
     turnCount: parsed.turns.length,
+    activityMs: activityOf(parsed, mtimeMs),
     mtimeMs,
     file,
   };
@@ -125,7 +146,7 @@ export async function listSessions(
     }
   }
 
-  return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return out.sort((a, b) => b.activityMs - a.activityMs);
 }
 
 export async function newestSession(

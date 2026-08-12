@@ -1,4 +1,3 @@
-// src/search.test.ts
 import { test, expect } from "bun:test";
 import { makeSnippet } from "./search";
 import type { CacheLine } from "./searchcache";

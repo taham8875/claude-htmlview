@@ -1,4 +1,3 @@
-// src/bidi.test.ts
 //
 // There is no DOM in Bun's test environment, and jsdom would breach the
 // zero-dependency constraint. So these tests assert source contracts -- that
@@ -8,7 +7,7 @@
 // Playwright, not part of `bun test`).
 import { test, expect } from "bun:test";
 
-test("bidi.js sets dir=auto on every block element type", async () => {
+test("bidi.js sets a direction on every block element type", async () => {
   const src = await Bun.file("public/bidi.js").text();
   for (const tag of ["p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"]) {
     expect(src).toContain(tag);
@@ -82,7 +81,7 @@ test("bidi.js resolves table direction explicitly rather than via dir=auto", asy
   const src = await Bun.file("public/bidi.js").text();
   // The explicit computation is the whole point: dir="auto" cannot work on a
   // table whose cells carry their own dir.
-  expect(src).toContain("firstStrongDir");
+  expect(src).toContain("resolveDir");
   expect(src).toContain("applyTableDir");
   expect(src).toMatch(/querySelectorAll\("table"\)/);
   // ...and <table> must NOT be in the plain dir="auto" block list.
@@ -113,4 +112,59 @@ test("bidi.js recognises Arabic and Latin as strongly directional", async () => 
     expect(rtlRe.test(ch)).toBe(false);
     expect(ltrRe.test(ch)).toBe(false);
   }
+});
+
+// --- Direction by RTL share --------------------------------------------------
+// dir="auto" is first-strong-character by spec, which mis-resolves the most
+// common shape in this corpus: an Arabic sentence that opens with a Latin
+// identifier ("create_card بيتبعت في كل..."). Counting replaces it, and the
+// count is deliberately not a 50% majority: a genuinely English sentence
+// almost never reaches 30% Arabic, while Arabic prose about code routinely
+// sits below 50%. resolveDir is pure, so unlike the rest of this file these
+// are real behavioural tests -- public/bidi.js is importable outside a browser
+// (the window binding at the bottom is guarded).
+import { resolveDir } from "../public/bidi.js";
+
+test("an Arabic sentence opening with a Latin word resolves rtl", () => {
+  expect(resolveDir("create_card بيتبعت في كل مرة من غير ما نمرر الفلاجات")).toBe("rtl");
+});
+
+test("an English sentence containing an Arabic word resolves ltr", () => {
+  expect(resolveDir("The card issuer rejects it — رفض — on every AVS mismatch")).toBe("ltr");
+});
+
+test("first-strong is not consulted: only the counts decide", () => {
+  // Same two words, opposite order. First-strong would give two different
+  // answers here; majority gives the same one twice.
+  expect(resolveDir("English كلمة عربية طويلة جدا هنا")).toBe("rtl");
+  expect(resolveDir("كلمة عربية طويلة جدا هنا English")).toBe("rtl");
+});
+
+test("rtl wins from 30% share upward, not from 50%", () => {
+  expect(resolveDir("abcdefghi دعوة")).toBe("rtl"); // 4/13 = 31%
+  expect(resolveDir("abc دعو")).toBe("rtl"); // 3/6 = 50%, an old tie
+});
+
+test("exactly 30% is not over the line", () => {
+  expect(resolveDir("abcdefg دعو")).toBe("ltr"); // 3/10 = 30% -- strictly greater wins
+});
+
+test("no strongly directional character at all falls through to null", () => {
+  expect(resolveDir("2024-07-20 :: 12.5% ()")).toBeNull();
+  expect(resolveDir("")).toBeNull();
+});
+
+test("bidi.js excludes code spans from the count", async () => {
+  const src = await Bun.file("public/bidi.js").text();
+  // Identifiers and file paths are incidental Latin inside Arabic prose;
+  // counting them flips a plainly-Arabic paragraph to ltr.
+  expect(src).toMatch(/CODE_SELECTOR\s*=\s*"[^"]*code[^"]*"/);
+  expect(src).toContain("proseText");
+});
+
+test("bidi.js no longer leaves block direction to the browser's first-strong", async () => {
+  const src = await Bun.file("public/bidi.js").text();
+  // The block loop must compute a direction, not hand out a bare dir="auto".
+  expect(src).not.toMatch(/querySelectorAll\(BLOCK_SELECTOR\)\)\s*\{?\s*[\s\S]{0,60}"auto"/);
+  expect(src).toMatch(/querySelectorAll\(BLOCK_SELECTOR\)[\s\S]{0,80}setBlockDir/);
 });

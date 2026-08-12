@@ -1,4 +1,3 @@
-// src/search.ts
 import { normalize } from "./normalize";
 import { readCacheEntry, type CacheLine } from "./searchcache";
 import { listSessions } from "./sessions";
@@ -16,40 +15,16 @@ export type Hit = {
 };
 
 /**
- * Normalize while recording, for each output character, the index of the source
- * character (UTF-16 code unit) it came from. Lets a match found in normalized
- * space be mapped back onto the original text, which is what the user actually
- * sees.
+ * Normalize while recording, per output character, the index of the source
+ * UTF-16 code unit it came from — so a match found in normalized space can be
+ * mapped back onto the original text the reader actually sees.
  *
- * This walks `text` one UTF-16 code unit at a time and calls `normalize()` on
- * each unit individually, rather than normalizing the whole string in one call
- * the way `searchcache.ts` does for `CacheLine.normalized`. That is safe here
- * only because every rule in `normalize()` is context-free at the code-unit
- * level:
- *   - tashkeel/tatweel stripping, alef/taa-marbuta/alef-maqsura unification,
- *     and Arabic-Indic digit folding all match a single character class and
- *     substitute a fixed single-character (or empty) result -- identical
- *     whether examined in isolation or in context.
- *   - `.toLowerCase()` is *usually* context-free too, but not always: Unicode
- *     defines one context-sensitive casing rule -- Greek capital sigma (Σ)
- *     lowercases to final-form ς at the end of a word but plain σ elsewhere
- *     -- and per-character lowercasing can't see "end of word". Verified
- *     empirically: "ΟΣ".toLowerCase() === "ος" (whole string) vs "οσ" (per
- *     character). That divergence is Greek-specific and out of scope for this
- *     Arabic/English tool; if it ever occurred, the effect is a missed match
- *     on that one line (this function's own indexOf simply wouldn't find the
- *     query), never a corrupted offset -- search() still only trusts offsets
- *     this same function derives, so it cannot disagree with itself.
- *   - Surrogate pairs (emoji / astral-plane characters): `text[i]` for a
- *     multi-unit character yields one raw UTF-16 surrogate half. `normalize()`
- *     does not match or alter lone surrogates (no rule's character class
- *     covers them, and `.toLowerCase()` is a no-op on them), so each half
- *     passes through unchanged and gets its own map entry pointing at its own
- *     index. Offsets computed from those entries land on code-unit
- *     boundaries that are always internally consistent with `text`, so pairs
- *     are never split *within* a match. The one place a pair genuinely can be
- *     split is the caller's context-radius truncation (arbitrary character
- *     count, not code-point aware), which `makeSnippet` guards separately.
+ * Normalizing one code unit at a time (rather than the whole string, as
+ * `searchcache.ts` does) is safe because every rule in `normalize()` is
+ * context-free at the code-unit level, and lone surrogate halves pass through
+ * untouched with their own map entries. The one context-sensitive casing rule
+ * in Unicode — Greek final sigma — is out of scope here, and would cost a
+ * missed match on that line rather than a wrong offset.
  */
 function normalizeWithMap(text: string): { normalized: string; map: number[] } {
   let normalized = "";

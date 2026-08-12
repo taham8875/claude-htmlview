@@ -1,4 +1,3 @@
-// src/transcript.test.ts
 import { test, expect } from "bun:test";
 import { parseTranscript } from "./transcript";
 
@@ -13,38 +12,38 @@ test("extracts the ai-title", async () => {
 test("groups into turns bounded by user messages", async () => {
   const p = await load("basic");
   expect(p.turns.length).toBe(2);
-  expect(p.turns[0].userText).toContain("check installed fonts");
-  expect(p.turns[1].userText).toContain("thanks");
+  expect(p.turns[0]!.userText).toContain("check installed fonts");
+  expect(p.turns[1]!.userText).toContain("thanks");
 });
 
 test("a turn spans multiple assistant message ids", async () => {
   const p = await load("basic");
-  const texts = p.turns[0].blocks.filter((b) => b.kind === "text");
+  const texts = p.turns[0]!.blocks.filter((b) => b.kind === "text");
   expect(texts.length).toBe(2);
 });
 
 test("pairs tool_use with its tool_result", async () => {
   const p = await load("basic");
-  const tool = p.turns[0].blocks.find((b) => b.kind === "tool") as any;
+  const tool = p.turns[0]!.blocks.find((b) => b.kind === "tool") as any;
   expect(tool.name).toBe("Bash");
   expect(tool.result).toContain("Noto Sans Arabic");
 });
 
 test("tool summary prefers the description field", async () => {
   const p = await load("basic");
-  const tool = p.turns[0].blocks.find((b) => b.kind === "tool") as any;
+  const tool = p.turns[0]!.blocks.find((b) => b.kind === "tool") as any;
   expect(tool.summary).toBe("list fonts");
 });
 
 test("captures thinking blocks", async () => {
   const p = await load("basic");
-  expect(p.turns[0].blocks.some((b) => b.kind === "thinking")).toBe(true);
+  expect(p.turns[0]!.blocks.some((b) => b.kind === "thinking")).toBe(true);
 });
 
 test("skips the truncated final line without throwing", async () => {
   const p = await load("truncated");
   expect(p.turns.length).toBe(1);
-  const texts = p.turns[0].blocks.filter((b) => b.kind === "text");
+  const texts = p.turns[0]!.blocks.filter((b) => b.kind === "text");
   expect(texts.length).toBe(1);
 });
 
@@ -67,16 +66,16 @@ test("concatenates blocks across entries sharing a message id", async () => {
   // 6388 such repeats carry differing content; zero carry identical content.
   // Deduping here discarded ~83% of all assistant blocks.
   const p = await load("edge");
-  const kinds = p.turns[0].blocks.map((b) => b.kind);
+  const kinds = p.turns[0]!.blocks.map((b) => b.kind);
   expect(kinds).toContain("thinking");
   expect(kinds).toContain("text");
-  const texts = p.turns[0].blocks.filter((b) => b.kind === "text") as any[];
+  const texts = p.turns[0]!.blocks.filter((b) => b.kind === "text") as any[];
   expect(texts.map((t) => t.text)).toEqual(["part one", "part two"]);
 });
 
 test("handles array-valued tool_result content", async () => {
   const p = await load("edge");
-  const tool = p.turns[0].blocks.find(
+  const tool = p.turns[0]!.blocks.find(
     (b) => b.kind === "tool" && (b as any).name === "Read"
   ) as any;
   expect(tool.result).toContain("file body");
@@ -105,5 +104,30 @@ test("surfaces unknown entry types as placeholders", async () => {
 });
 
 test("returns empty rather than throwing on empty input", () => {
-  expect(parseTranscript("")).toEqual({ title: null, turns: [] });
+  expect(parseTranscript("")).toEqual({ title: null, turns: [], lastTimestamp: null });
+});
+
+// lastTimestamp is what "when was this session last active" is derived from,
+// because the file's own mtime is not: a live `claude` process rewrites its
+// transcript periodically without appending a turn.
+test("reports the newest entry timestamp as lastTimestamp", async () => {
+  const p = await load("basic");
+  expect(p.lastTimestamp).toBe("2026-07-20T10:01:01.000Z");
+});
+
+test("lastTimestamp counts entries that never become turns", () => {
+  // A streamed response appends system/sidechain lines too. Tracking only turn
+  // timestamps would leave activity frozen at the user's message for the whole
+  // length of a long assistant run.
+  const p = parseTranscript(
+    [
+      `{"type":"user","uuid":"u1","timestamp":"2026-07-20T10:00:00.000Z","message":{"role":"user","content":"hi"}}`,
+      `{"type":"system","timestamp":"2026-07-20T10:05:00.000Z"}`,
+    ].join("\n")
+  );
+  expect(p.lastTimestamp).toBe("2026-07-20T10:05:00.000Z");
+});
+
+test("lastTimestamp is null when no entry carries one", () => {
+  expect(parseTranscript(`{"type":"ai-title","aiTitle":"x"}`).lastTimestamp).toBeNull();
 });

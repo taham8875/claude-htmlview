@@ -1,5 +1,5 @@
 // public/app.js
-import { applyBidi } from "/bidi.js";
+import { applyBidi, setBlockDir } from "/bidi.js";
 
 const app = document.getElementById("app");
 const TOOL_LIMIT = 4096; // spec: truncate tool output; largest observed is 46KB
@@ -106,12 +106,54 @@ function safeSlice(s, n) {
   return s.slice(0, n);
 }
 
+/** A button that copies `getText()` and reports the outcome in its own label.
+ *  navigator.clipboard needs a secure context; 127.0.0.1 is one (the server
+ *  binds nowhere else), so the catch covers permission denial, not http://. */
+function copyButton(label, getText) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "copy-btn";
+  b.setAttribute("dir", "ltr");
+  b.textContent = label;
+  let reset;
+  b.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(getText());
+      b.dataset.state = "ok";
+      b.textContent = "copied";
+    } catch {
+      b.dataset.state = "err";
+      b.textContent = "copy failed";
+    }
+    clearTimeout(reset); // repeat clicks must not race each other's restore
+    reset = setTimeout(() => {
+      delete b.dataset.state;
+      b.textContent = label;
+    }, 1400);
+  };
+  return b;
+}
+
 function toolNode(block, key) {
   const d = document.createElement("details");
   d.className = "tool";
   d.dataset.key = key;
   const summary = document.createElement("summary");
-  summary.textContent = `${block.name}${block.summary ? " · " + block.summary : ""}`;
+  const name = document.createElement("span");
+  name.className = "tool-name";
+  name.textContent = block.name;
+  summary.append(name);
+  if (block.summary) {
+    const sum = document.createElement("span");
+    sum.className = "tool-sum";
+    sum.textContent = block.summary;
+    // dir="auto" (first-strong), deliberately NOT the Rule 1 ratio: a summary is
+    // an English label that often quotes an Arabic literal ("Filter the وصل
+    // أمانة hits"). At ~40% Arabic the ratio flips it to rtl and the label reads
+    // back to front. First-strong keeps the label's own direction.
+    sum.setAttribute("dir", "auto");
+    summary.append(sum);
+  }
   d.append(summary);
 
   const body = document.createElement("div");
@@ -143,16 +185,37 @@ function toolNode(block, key) {
   return d;
 }
 
+/** "TURN 12 · 14:03", linked to its own anchor so a turn can be cited. */
+function turnMetaNode(turn) {
+  const meta = document.createElement("div");
+  meta.className = "turn-meta";
+  meta.setAttribute("dir", "ltr"); // a number and a clock time, never RTL
+  const link = document.createElement("a");
+  link.href = `#turn-${turn.index}`;
+  link.textContent = `turn ${turn.index}`;
+  meta.append(link);
+  if (turn.timestamp) {
+    const when = new Date(turn.timestamp);
+    if (!Number.isNaN(when.valueOf())) {
+      meta.append(
+        ` · ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+      );
+    }
+  }
+  return meta;
+}
+
 function turnNode(turn) {
   const section = document.createElement("section");
   section.className = "turn";
   section.id = `turn-${turn.index}`;
+  section.append(turnMetaNode(turn));
 
   if (turn.userText) {
     const u = document.createElement("div");
     u.className = "user";
-    u.setAttribute("dir", "auto"); // rule 1, for the non-markdown user block
     u.textContent = turn.userText;
+    setBlockDir(u); // rule 1, for the non-markdown user block
     section.append(u);
   }
 
@@ -177,46 +240,186 @@ function turnNode(turn) {
       section.append(p);
     }
   });
+
+  // Copy the response as the markdown it was written in, not as rendered text:
+  // the usual destination is another editor or a message box. Tool calls and
+  // their output are excluded -- they are the machinery, not the answer.
+  const responseText = turn.blocks
+    .filter((b) => b.kind === "text")
+    .map((b) => b.text)
+    .join("\n\n");
+  if (responseText) {
+    const actions = document.createElement("div");
+    actions.className = "turn-actions";
+    actions.append(copyButton("copy response", () => responseText));
+    section.append(actions);
+  }
   return section;
 }
 
 const atBottom = () =>
   window.innerHeight + window.scrollY >= document.body.offsetHeight - 120;
 
+function sessionRow(s) {
+  const a = document.createElement("a");
+  a.className = "session-row";
+  a.href = `/s/${s.id}`;
+  const title = document.createElement("div");
+  title.textContent = s.title;
+  setBlockDir(title);
+  // The row is one block: its meta line aligns with its title rather than
+  // resolving its own direction, or an Arabic row reads right-then-left.
+  a.setAttribute("dir", title.getAttribute("dir"));
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  // Always LTR: a count and a date are Latin/numeric, and inside an RTL row
+  // base-RTL ordering throws the leading count to the far end ("turns · … 5").
+  // CSS re-aligns it to the row's edge without touching that order.
+  meta.setAttribute("dir", "ltr");
+  meta.textContent =
+    `${s.turnCount} turn${s.turnCount === 1 ? "" : "s"} · ` +
+    new Date(s.activityMs).toLocaleString();
+  a.append(title, meta);
+  return a;
+}
+
+function groupHeading(text) {
+  const h = document.createElement("h2");
+  h.className = "group";
+  h.textContent = text;
+  setBlockDir(h);
+  return h;
+}
+
+/** Sentinel for "no project filter"; not a real projectPath, so it can never
+ *  collide with one. */
+const ALL_PROJECTS = "*";
+
+/** One entry in the project rail. The path is split so the directory reads
+ *  quietly and the project name carries the weight. */
+function projectLink(projectPath, label, count, isActive) {
+  // "all" needs its own URL: a bare "/" carries no project param and would fall
+  // straight back into the default-to-newest-project rule below.
+  const a = document.createElement("a");
+  a.href = `/?project=${encodeURIComponent(projectPath)}`;
+  a.title = label; // the rail truncates long paths; hover gives the whole one
+  a.classList.toggle("active", isActive);
+  if (isActive) a.setAttribute("aria-current", "true");
+  const cut = label.lastIndexOf("/");
+  if (cut > 0) {
+    const dir = document.createElement("span");
+    dir.className = "p-dir";
+    dir.textContent = label.slice(0, cut + 1);
+    a.append(dir);
+  }
+  const name = document.createElement("span");
+  name.className = "p-name";
+  name.textContent = cut > 0 ? label.slice(cut + 1) : label;
+  a.append(name);
+  const n = document.createElement("span");
+  n.className = "count";
+  n.setAttribute("dir", "ltr");
+  n.textContent = String(count);
+  a.append(n);
+  setBlockDir(a); // a project path can embed non-Latin directory names
+  return a;
+}
+
+// /api/sessions parses every transcript on the machine -- measured at ~720ms
+// for 225 sessions here -- so re-fetching it just to change the project filter
+// put a dead pause on every click. The payload is cached and redrawn instantly;
+// a background revalidate replaces it only if it actually changed.
+let sessionsCache = null;
+let revalidating = false;
+
 async function renderIndex() {
-  const sessions = await (await fetch("/api/sessions")).json();
+  if (sessionsCache) {
+    drawIndex(sessionsCache);
+    revalidateSessions();
+    return;
+  }
+  sessionsCache = await (await fetch("/api/sessions")).json();
+  drawIndex(sessionsCache);
+}
+
+async function revalidateSessions() {
+  if (revalidating) return;
+  revalidating = true;
+  try {
+    const fresh = await (await fetch("/api/sessions")).json();
+    if (JSON.stringify(fresh) === JSON.stringify(sessionsCache)) return;
+    sessionsCache = fresh;
+    // The reader may have navigated away during the fetch; only redraw an index
+    // that is still on screen.
+    if (location.pathname === "/") drawIndex(fresh);
+  } finally {
+    revalidating = false;
+  }
+}
+
+// Sessions are grouped under a project rail rather than one flat scroll: a
+// machine with dozens of projects makes a flat list unnavigable. The selection
+// lives in the URL (?project=...) so it survives back/forward and can be shared.
+function drawIndex(sessions) {
+  // Insertion order is the API's order, which is newest-activity-first: the
+  // rail therefore lists the projects you touched most recently at the top.
   const byProject = new Map();
   for (const s of sessions) {
-    if (!byProject.has(s.project)) byProject.set(s.project, []);
-    byProject.get(s.project).push(s);
-  }
-  app.replaceChildren();
-  for (const [project, list] of byProject) {
-    const h = document.createElement("h2");
-    h.textContent = project;
-    h.setAttribute("dir", "auto");
-    app.append(h);
-    for (const s of list) {
-      const a = document.createElement("a");
-      a.className = "session-row";
-      a.href = `/s/${s.id}`;
-      const title = document.createElement("div");
-      title.setAttribute("dir", "auto");
-      title.textContent = s.title;
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      meta.setAttribute("dir", "auto");
-      meta.textContent = `${s.turnCount} turns · ${new Date(s.mtimeMs).toLocaleString()}`;
-      a.append(title, meta);
-      app.append(a);
+    if (!byProject.has(s.projectPath)) {
+      byProject.set(s.projectPath, { label: s.project, list: [] });
     }
+    byProject.get(s.projectPath).list.push(s);
   }
+  const groups = [...byProject.entries()];
+
+  const wanted = new URLSearchParams(location.search).get("project");
+  // Default to the most recently active project rather than to everything:
+  // showing all of it is the scroll problem this rail exists to remove.
+  const active =
+    wanted === ALL_PROJECTS || byProject.has(wanted)
+      ? wanted
+      : groups[0]?.[0] ?? ALL_PROJECTS;
+
+  const layout = document.createElement("div");
+  layout.className = "index-layout";
+
+  const rail = document.createElement("aside");
+  rail.className = "projects";
+  rail.setAttribute("aria-label", "projects");
+  rail.append(
+    projectLink(ALL_PROJECTS, "all sessions", sessions.length, active === ALL_PROJECTS)
+  );
+  for (const [path, g] of groups) {
+    rail.append(projectLink(path, g.label, g.list.length, path === active));
+  }
+
+  const pane = document.createElement("div");
+  pane.className = "sessions-pane";
+  if (active === ALL_PROJECTS) {
+    for (const [, g] of groups) {
+      pane.append(groupHeading(g.label));
+      for (const s of g.list) pane.append(sessionRow(s));
+    }
+  } else {
+    const g = byProject.get(active);
+    pane.append(groupHeading(g.label));
+    for (const s of g.list) pane.append(sessionRow(s));
+  }
+
+  layout.append(rail, pane);
+  app.replaceChildren(layout);
 }
 
 let currentSession = null;
 // True once the reader has clicked "load earlier turns" for the currently
 // open thread -- see the SSE handler below for why this matters.
 let pagedBack = false;
+// mtime of the session as of the last render, so a tab returning from hidden
+// can tell "something changed while I wasn't listening" from "nothing did".
+// Last activity *inside* the transcript, not the file's mtime: an idle session
+// still open in a `claude` process gets its file rewritten periodically, and
+// comparing mtimes made every one of those look like new activity.
+let lastActivityMs = 0;
 
 async function renderThread(id) {
   currentSession = id;
@@ -227,13 +430,14 @@ async function renderThread(id) {
     app.textContent = "session not found";
     return;
   }
+  lastActivityMs = data.meta.activityMs;
   const h = document.createElement("h1");
-  h.setAttribute("dir", "auto");
   h.textContent = data.meta.title;
+  setBlockDir(h);
   const sub = document.createElement("div");
-  sub.className = "muted";
-  sub.setAttribute("dir", "auto"); // rule 1: project names are file paths but can embed non-Latin text
+  sub.className = "muted path";
   sub.textContent = data.meta.project;
+  setBlockDir(sub); // rule 1: project names are file paths but can embed non-Latin text
   app.replaceChildren(h, sub);
 
   if (data.hasMore) {
@@ -293,10 +497,9 @@ async function renderSearch() {
     a.href = `/s/${hit.sessionId}#turn-${hit.turn}`;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.setAttribute("dir", "auto");
     meta.textContent = `${hit.project} · ${hit.title} · turn ${hit.turn}`;
+    setBlockDir(meta);
     const snip = document.createElement("div");
-    snip.setAttribute("dir", "auto"); // rule 1 applies to snippets too
     // matchStart/matchEnd are UTF-16 offsets computed server-side (search.ts)
     // with an explicit guard against landing inside a surrogate pair, so
     // slicing here can't split one -- verified against search.test.ts.
@@ -306,6 +509,7 @@ async function renderSearch() {
     const mark = document.createElement("mark");
     mark.textContent = hit.snippet.slice(hit.matchStart, hit.matchEnd);
     snip.append(mark, document.createTextNode(hit.snippet.slice(hit.matchEnd)));
+    setBlockDir(snip); // rule 1 applies to snippets too -- after the text is in
     a.append(meta, snip);
     app.append(a);
   }
@@ -320,7 +524,7 @@ async function renderArtifacts() {
   }
   for (const a of items) {
     const row = document.createElement("a");
-    row.className = "session-row";
+    row.className = "session-row artifact";
     row.href = a.href;
     row.innerHTML = `<div dir="auto">${esc(a.name)}</div>
       <div class="meta" dir="auto">${esc(a.project)} · ${new Date(a.mtimeMs).toLocaleString()}</div>`;
@@ -328,8 +532,21 @@ async function renderArtifacts() {
   }
 }
 
-function route() {
+/** Mark the nav entry the current page belongs to. A thread belongs to
+ *  "sessions", which is where the reader arrived from. */
+function markActiveNav() {
   const p = location.pathname;
+  const current = p === "/search" || p === "/artifacts" ? p : "/";
+  for (const a of document.querySelectorAll("header.top nav a")) {
+    a.classList.toggle("active", a.getAttribute("href") === current);
+  }
+}
+
+function route() {
+  markActiveNav();
+  const p = location.pathname;
+  // Only the index carries a side rail, and only it needs the wider column.
+  app.classList.toggle("wide", p === "/");
   if (p.startsWith("/s/")) return renderThread(decodeURIComponent(p.slice(3)));
   // Leaving the thread view entirely: no open session left to receive live
   // updates for, so drop any stale pending-update state along with it.
@@ -345,6 +562,12 @@ document.addEventListener("click", (e) => {
   const a = e.target.closest?.("a");
   if (!a || a.target || !a.href.startsWith(location.origin)) return;
   if (a.pathname.startsWith("/artifact/")) return; // real navigation to the file
+  // Same-page anchors (turn markers) must not be routed: pushState-ing "#turn-3"
+  // and re-rendering would tear down the very turn being jumped to.
+  if (a.getAttribute("href")?.startsWith("#")) return;
+  // /live is a server-side redirect to the newest session. Routing it client
+  // side just re-rendered the index under a /live URL, so the link never worked.
+  if (a.pathname === "/live") return;
   e.preventDefault();
   history.pushState({}, "", a.getAttribute("href"));
   route();
@@ -353,30 +576,16 @@ window.addEventListener("popstate", route);
 
 // Live updates. Re-render only when the change concerns the open session.
 //
-// A naive "always renderThread()" here has two real costs, both from tearing
-// down and rebuilding the entire turn list on every event:
-//   - a reader who has scrolled up to reread history gets silently yanked:
-//     their scroll position and any expanded <details> for a tool call
-//     vanish into a freshly rebuilt DOM.
-//   - a reader who clicked "load earlier turns" loses that extra history:
-//     renderThread() always re-fetches just the last-50-turns window, with
-//     no memory of how far back they had paged.
-// Neither is acceptable for the primary use case (watching a live session
-// while occasionally scrolling back to check something), so: refresh
-// immediately only when the reader is at the bottom AND hasn't paged back,
-// re-opening whatever <details> were open before the rebuild.
+// renderThread() rebuilds the whole turn list from the last-50-turns window,
+// which costs a reader their scroll position, their expanded <details>, and
+// any history they paged back to. So refresh immediately only when they are
+// at the bottom AND haven't paged back.
 //
-// But suppressing the refresh must not mean *discarding* the event: that
-// would silently drop live updates forever, with no way back short of a
-// manual reload -- worse than the yank/collapse behaviour it replaced, for a
-// viewer whose headline feature is watching a session live. So a suppressed
-// event instead marks a pending-update flag and shows a small "new activity"
-// pill fixed near the bottom of the page. The pill is recovered from either
-// by scrolling back to the bottom (a `scroll` listener notices and refreshes
-// automatically, itself still gated on `!pagedBack` for the same reason as
-// above) or by clicking the pill directly, which always refreshes -- an
-// explicit click is an acceptable time to also give up paged-back history,
-// the same tradeoff a manual reload would make.
+// A suppressed event must not be *discarded* — that drops live updates with
+// no way back short of a reload. It instead raises a "new activity" pill,
+// cleared by scrolling to the bottom (same !pagedBack gate) or by clicking
+// it, which always refreshes: an explicit click is a fair moment to also
+// give up paged-back history.
 const updatePill = document.createElement("button");
 updatePill.id = "update-pill";
 updatePill.type = "button";
@@ -418,7 +627,7 @@ window.addEventListener("scroll", () => {
   }
 });
 
-new EventSource("/events").onmessage = (e) => {
+function onLiveEvent(e) {
   const { sessionId } = JSON.parse(e.data);
   if (sessionId !== currentSession) return;
   if (pagedBack || !atBottom()) {
@@ -426,6 +635,59 @@ new EventSource("/events").onmessage = (e) => {
     return;
   }
   refreshLiveThread(sessionId);
-};
+}
+
+// One EventSource holds a TCP connection open for as long as it is alive, and
+// browsers cap HTTP/1.1 at six connections per origin. Opening it once at
+// module scope therefore meant six open tabs consumed the entire budget and
+// every later request to this origin -- including the navigation that loads a
+// seventh tab -- queued forever with no error and no timeout: the page simply
+// hung. So the stream is scoped to visibility instead. A hidden tab renders
+// nothing, so it has no use for the socket it is holding.
+//
+// This only became reachable once the SSE heartbeat landed: before it, Bun's
+// 10s idleTimeout tore down each idle stream and released its socket, so the
+// budget drained on its own every 10s. Keeping streams alive fixed lost
+// updates and turned that self-draining leak into permanent occupancy.
+let liveStream = null;
+
+function openLiveStream() {
+  if (liveStream) return; // visibilitychange can fire repeatedly
+  liveStream = new EventSource("/events");
+  liveStream.onmessage = onLiveEvent;
+}
+
+function closeLiveStream() {
+  liveStream?.close();
+  liveStream = null;
+}
+
+// Changes that land while the stream is closed are broadcast to nobody, which
+// is exactly the lost-update failure the heartbeat exists to prevent -- so a
+// tab coming back re-syncs rather than waiting for the next event, which for a
+// session that has since gone quiet would never arrive. The refresh is gated
+// on the same paged-back/at-bottom rules as the live path, so returning to a
+// tab never yanks a reader who had scrolled back.
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) {
+    closeLiveStream();
+    return;
+  }
+  openLiveStream();
+  if (!currentSession) return;
+  if (!pagedBack && atBottom()) {
+    refreshLiveThread(currentSession);
+    return;
+  }
+  // Scrolled back: raise the pill only if the session actually moved, or every
+  // tab switch would cry "new activity" at a reader who has missed nothing.
+  const seen = lastActivityMs;
+  const meta = await (
+    await fetch(`/api/session/${encodeURIComponent(currentSession)}`)
+  ).json();
+  if (!meta.error && meta.meta.activityMs > seen) showPendingIndicator();
+});
+
+if (!document.hidden) openLiveStream();
 
 route();

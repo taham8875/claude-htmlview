@@ -1,4 +1,3 @@
-// src/server.ts
 import { join, resolve, sep } from "node:path";
 import { stat, realpath } from "node:fs/promises";
 import {
@@ -38,11 +37,9 @@ const htmlShell = () =>
  * The client-side routes that must always render the SPA shell, regardless
  * of whether a matching static file exists. Everything else falls through to
  * "serve a real file under public/, or 404" — see the traversal test in
- * server.test.ts for why an unbounded catch-all here is a real bug, not just
- * a style choice: the task's own draft reference implementation treated
- * *any* unmatched path as an app route and returned 200 for it, which is
- * indistinguishable, from a client's error handling, from a page that
- * actually exists.
+ * server.test.ts for why an unbounded catch-all here is a real bug: treating
+ * *any* unmatched path as an app route returns 200 for it, which a client's
+ * error handling cannot distinguish from a page that actually exists.
  */
 function isAppRoute(path: string): boolean {
   return path === "/" || path === "/search" || path === "/artifacts" || path.startsWith("/s/");
@@ -56,7 +53,27 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
   return Math.min(Math.max(Math.trunc(n), min), max);
 }
 
-export type ServerOptions = { projectsDir?: string; port?: number };
+/**
+ * Bun.serve()'s default idleTimeout. A connection that neither sends nor
+ * receives data for this long is torn down -- which for an SSE stream means
+ * every quiet period kills it, since the server only writes on a real change.
+ */
+export const BUN_IDLE_TIMEOUT_MS = 10_000;
+
+/**
+ * How often /events writes a keep-alive comment. Writing to the response
+ * resets the idle timer (verified empirically: a stream pinging every 2s
+ * outlives 20s, an identical silent one dies at ~10s), so this only has to
+ * stay comfortably below BUN_IDLE_TIMEOUT_MS. The payload is 9 bytes.
+ */
+export const SSE_HEARTBEAT_MS = 4_000;
+
+export type ServerOptions = {
+  projectsDir?: string;
+  port?: number;
+  /** Test seam: shorten the heartbeat so a test need not wait whole seconds. */
+  heartbeatMs?: number;
+};
 
 /** True for the specific error Bun.serve() throws synchronously when the requested port is taken. */
 function isPortInUse(err: unknown): boolean {
@@ -96,6 +113,7 @@ function bindWithFallback(
 
 export async function createServer(opts: ServerOptions = {}) {
   const projectsDir = opts.projectsDir ?? defaultProjectsDir();
+  const heartbeatMs = opts.heartbeatMs ?? SSE_HEARTBEAT_MS;
   const clients = new Set<(sessionId: string) => void>();
 
   const server = bindWithFallback(async function fetch(req) {
@@ -132,17 +150,43 @@ export async function createServer(opts: ServerOptions = {}) {
 
     if (path === "/events") {
       let send: ((sessionId: string) => void) | null = null;
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      const stopHeartbeat = () => {
+        if (heartbeat !== null) clearInterval(heartbeat);
+        heartbeat = null;
+      };
       const stream = new ReadableStream({
         start(controller) {
           send = (sessionId: string) =>
             controller.enqueue(`data: ${JSON.stringify({ sessionId })}\n\n`);
           clients.add(send);
           controller.enqueue(": connected\n\n");
+
+          // Keep the stream from going quiet long enough for Bun to reclaim
+          // it as idle. Without this the connection dies during any lull,
+          // EventSource reconnects a couple of seconds later, and every
+          // change in that gap is broadcast to nobody -- an open page silently
+          // stops updating until the reader reloads by hand. A comment line
+          // is inert to EventSource: it resets the idle timer and fires no
+          // onmessage, so clients never see a synthetic update.
+          heartbeat = setInterval(() => {
+            try {
+              controller.enqueue(": ping\n\n");
+            } catch {
+              // Controller already closed and cleanup hasn't run yet -- stop
+              // ticking rather than throwing out of a timer callback, where
+              // there is no caller to catch it.
+              stopHeartbeat();
+            }
+          }, heartbeatMs);
+          // Never let a keep-alive timer be the reason the process stays up.
+          heartbeat.unref?.();
           // The primary cleanup path: fires promptly when the client
           // actually closes the connection (page navigation, tab close,
           // EventSource.close()). Verified this fires within ~1ms of a
           // real disconnect (AbortController.abort() on the fetch).
           req.signal.addEventListener("abort", () => {
+            stopHeartbeat();
             if (send) clients.delete(send);
             try {
               controller.close();
@@ -154,6 +198,7 @@ export async function createServer(opts: ServerOptions = {}) {
         // a reader-only cancel (no socket teardown) — see report — so it's
         // not the primary signal, but costs nothing to also handle.
         cancel() {
+          stopHeartbeat();
           if (send) clients.delete(send);
         },
       });
@@ -181,9 +226,9 @@ export async function createServer(opts: ServerOptions = {}) {
     // Artifact library: serves files written by the htmlview-artifact
     // skill from artifactsDir() (~/.claude/htmlview/artifacts by default,
     // overridable for tests). This is arbitrary-file-serving from a
-    // user-writable directory -- the exact shape of the symlink-escape
-    // exploit Task 9 found in the static route below, so it gets the same
-    // three-step treatment: decode before containment-checking (encoded
+    // user-writable directory -- the same symlink-escape shape the static
+    // route below has to defend, so it gets the same three-step
+    // treatment: decode before containment-checking (encoded
     // traversal survives literal-".." checks), lexically contain the
     // decoded target, then realpath()-contain the *resolved* target since
     // stat()/Bun.file() follow symlinks past the lexical check. Unlike
@@ -279,7 +324,15 @@ export async function createServer(opts: ServerOptions = {}) {
 
     try {
       const st = await stat(realTarget);
-      if (st.isFile()) return new Response(Bun.file(realTarget));
+      // no-cache means "revalidate before reuse", not "never cache" -- the
+      // browser still gets a 304 for an unchanged asset. Without it these
+      // responses carry no freshness information at all, so a client can go on
+      // running a stale app.js after the file on disk has changed.
+      if (st.isFile()) {
+        return new Response(Bun.file(realTarget), {
+          headers: { "cache-control": "no-cache" },
+        });
+      }
     } catch {
       // not found, or unreadable — fall through to 404
     }

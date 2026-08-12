@@ -1,4 +1,3 @@
-// src/searchcache.test.ts
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { buildCacheEntry, readCacheEntry, cacheDir, refreshCache, cachedSourceMtime } from "./searchcache";
 import type { SessionMeta } from "./sessions";
@@ -23,7 +22,7 @@ afterAll(async () => {
 
 const meta = (id: string): SessionMeta => ({
   id, project: "~/demo", projectPath: "-home-taha-demo",
-  title: "t", turnCount: 2, mtimeMs: Date.now(),
+  title: "t", turnCount: 2, activityMs: Date.now(), mtimeMs: Date.now(),
   file: "src/fixtures/basic.jsonl",
 });
 

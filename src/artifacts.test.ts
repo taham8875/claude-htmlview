@@ -1,4 +1,3 @@
-// src/artifacts.test.ts
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { listArtifacts, artifactsDir } from "./artifacts";
 import { createServer } from "./server";
@@ -52,10 +51,9 @@ test("lists an artifact with decoded project and href", async () => {
 
 test("a file deleted mid-scan drops only that row, not the whole list", async () => {
   // Mirrors listSessions()'s per-file try/continue convention (src/sessions.ts):
-  // one bad file must not empty the entire library. Regression test for the
-  // earlier version of listArtifacts(), which wrapped the whole loop --
-  // including the per-file stat() -- in one try that returned [] on any
-  // single failure.
+  // one bad file must not empty the entire library. Wrapping the whole loop --
+  // including the per-file stat() -- in a single try returns [] on any one
+  // failure, which is the regression this guards.
   //
   // Deleting the file *before* calling listArtifacts() would not exercise
   // this: Bun's Glob.scan() with the default onlyFiles resolves each entry's
@@ -199,7 +197,7 @@ test("artifact route rejects an absolute-path-shaped suffix", async () => {
 });
 
 test("a symlink placed inside the artifacts dir cannot be used to read a file outside it", async () => {
-  // Mirrors the Task 9 exploit and its regression test in server.test.ts:
+  // Mirrors the static-route symlink test in server.test.ts:
   // the lexical containment check passes trivially because the symlink's
   // own path is under artifactsDir() -- only realpath()-then-recheck closes
   // the gap, since stat()/Bun.file() follow the symlink to its real target.

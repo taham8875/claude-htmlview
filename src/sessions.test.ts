@@ -1,7 +1,6 @@
-// src/sessions.test.ts
 import { test, expect } from "bun:test";
 import { decodeProject, resolveEncodedPath, listSessions, findSession } from "./sessions";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -67,10 +66,10 @@ async function fixtureDir() {
 test("lists sessions with decoded project and derived title", async () => {
   const s = await listSessions(await fixtureDir());
   expect(s.length).toBe(1);
-  expect(s[0].id).toBe("sess-a");
-  expect(s[0].project).toBe("~/github/demo");
-  expect(s[0].title).toBe("Check the font setup");
-  expect(s[0].turnCount).toBe(2);
+  expect(s[0]!.id).toBe("sess-a");
+  expect(s[0]!.project).toBe("~/github/demo");
+  expect(s[0]!.title).toBe("Check the font setup");
+  expect(s[0]!.turnCount).toBe(2);
 });
 
 test("never lists subagent transcripts as sessions", async () => {
@@ -80,6 +79,45 @@ test("never lists subagent transcripts as sessions", async () => {
 
 test("returns empty for a missing projects dir rather than throwing", async () => {
   expect(await listSessions("/nonexistent/path/xyz")).toEqual([]);
+});
+
+/** Two sessions whose in-file activity and file mtime disagree. */
+async function skewedDir() {
+  const root = await mkdtemp(join(tmpdir(), "htmlview-"));
+  const proj = join(root, "-home-taha-github-demo");
+  await mkdir(proj, { recursive: true });
+  const line = (ts: string) =>
+    `{"type":"user","uuid":"u1","timestamp":"${ts}","message":{"role":"user","content":"hi"}}`;
+  await writeFile(join(proj, "stale.jsonl"), line("2026-07-20T10:00:00.000Z"));
+  await writeFile(join(proj, "fresh.jsonl"), line("2026-07-25T10:00:00.000Z"));
+  await utimes(join(proj, "stale.jsonl"), new Date(), new Date());
+  await utimes(join(proj, "fresh.jsonl"), new Date(1), new Date(1));
+  return { root, proj };
+}
+
+test("sorts by the newest timestamp inside the transcript, not file mtime", async () => {
+  // Verified on this machine: every `claude` process still holding a session
+  // open rewrites that session's .jsonl periodically without appending a turn,
+  // which bumps mtime and floats days-old conversations to the top of the list.
+  const { root } = await skewedDir();
+  expect((await listSessions(root)).map((s) => s.id)).toEqual(["fresh", "stale"]);
+});
+
+test("keeps mtimeMs alongside activityMs, since the search cache keys on it", async () => {
+  const { root } = await skewedDir();
+  const stale = (await listSessions(root)).find((s) => s.id === "stale")!;
+  expect(stale.activityMs).toBe(Date.parse("2026-07-20T10:00:00.000Z"));
+  expect(stale.mtimeMs).toBeGreaterThan(stale.activityMs);
+});
+
+test("falls back to file mtime when the transcript carries no timestamps", async () => {
+  const root = await mkdtemp(join(tmpdir(), "htmlview-"));
+  const proj = join(root, "-home-taha-github-demo");
+  await mkdir(proj, { recursive: true });
+  await writeFile(join(proj, "sess-b.jsonl"), `{"type":"ai-title","aiTitle":"no times here"}`);
+  await utimes(join(proj, "sess-b.jsonl"), new Date(12_345_000), new Date(12_345_000));
+  const [s] = await listSessions(root);
+  expect(s!.activityMs).toBe(12_345_000);
 });
 
 // findSession looks up one session without parsing the rest of the corpus
