@@ -1,12 +1,18 @@
 import { test, expect } from "bun:test";
 import { decodeProject, resolveEncodedPath, listSessions, findSession } from "./sessions";
 import { mkdtemp, mkdir, writeFile, utimes } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
+// The real home dir, in Claude Code's encoded form. Derived rather than
+// hardcoded: decodeProject() abbreviates against homedir(), so a literal
+// "-home-someone" only decodes to "~" on that one machine. Assumes a home
+// path with no literal hyphen, which the encoding cannot round-trip.
+const HOME_ENC = homedir().replaceAll("/", "-");
+
 test("decodes an encoded project dir to a tilde path", () => {
-  expect(decodeProject("-home-taha-github-docmost")).toBe("~/github/docmost");
-  expect(decodeProject("-home-taha")).toBe("~");
+  expect(decodeProject(`${HOME_ENC}-github-docmost`)).toBe("~/github/docmost");
+  expect(decodeProject(HOME_ENC)).toBe("~");
 });
 
 // A virtual filesystem, so these tests never touch the real home tree.
@@ -52,7 +58,7 @@ test("does not blow up exponentially on a pathological input", () => {
 
 async function fixtureDir() {
   const root = await mkdtemp(join(tmpdir(), "htmlview-"));
-  const proj = join(root, "-home-taha-github-demo");
+  const proj = join(root, `${HOME_ENC}-github-demo`);
   await mkdir(proj, { recursive: true });
   const body = await Bun.file("src/fixtures/basic.jsonl").text();
   await writeFile(join(proj, "sess-a.jsonl"), body);
@@ -84,7 +90,7 @@ test("returns empty for a missing projects dir rather than throwing", async () =
 /** Two sessions whose in-file activity and file mtime disagree. */
 async function skewedDir() {
   const root = await mkdtemp(join(tmpdir(), "htmlview-"));
-  const proj = join(root, "-home-taha-github-demo");
+  const proj = join(root, `${HOME_ENC}-github-demo`);
   await mkdir(proj, { recursive: true });
   const line = (ts: string) =>
     `{"type":"user","uuid":"u1","timestamp":"${ts}","message":{"role":"user","content":"hi"}}`;
@@ -112,7 +118,7 @@ test("keeps mtimeMs alongside activityMs, since the search cache keys on it", as
 
 test("falls back to file mtime when the transcript carries no timestamps", async () => {
   const root = await mkdtemp(join(tmpdir(), "htmlview-"));
-  const proj = join(root, "-home-taha-github-demo");
+  const proj = join(root, `${HOME_ENC}-github-demo`);
   await mkdir(proj, { recursive: true });
   await writeFile(join(proj, "sess-b.jsonl"), `{"type":"ai-title","aiTitle":"no times here"}`);
   await utimes(join(proj, "sess-b.jsonl"), new Date(12_345_000), new Date(12_345_000));

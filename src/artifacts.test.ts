@@ -2,8 +2,11 @@ import { test, expect, beforeAll, afterAll } from "bun:test";
 import { listArtifacts, artifactsDir } from "./artifacts";
 import { createServer } from "./server";
 import { mkdtemp, mkdir, writeFile, rm, utimes, symlink, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
+
+// The real home dir in Claude Code's encoded form; see sessions.test.ts.
+const HOME_ENC = homedir().replaceAll("/", "-");
 
 // Redirect artifactsDir() to a temp dir for the whole file. Without an
 // override seam here, listArtifacts() reads from the user's real
@@ -38,7 +41,7 @@ test("artifactsDir resolves under ~/.claude/htmlview when unoverridden", () => {
 });
 
 test("lists an artifact with decoded project and href", async () => {
-  const dir = join(artifactsDir(), "-home-taha-github-demo");
+  const dir = join(artifactsDir(), `${HOME_ENC}-github-demo`);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "chart.html"), "<html></html>");
 
@@ -46,7 +49,7 @@ test("lists an artifact with decoded project and href", async () => {
   expect(out.length).toBe(1);
   expect(out[0]!.name).toBe("chart");
   expect(out[0]!.project).toBe("~/github/demo");
-  expect(out[0]!.href).toBe("/artifact/-home-taha-github-demo/chart.html");
+  expect(out[0]!.href).toBe(`/artifact/${HOME_ENC}-github-demo/chart.html`);
 });
 
 test("a file deleted mid-scan drops only that row, not the whole list", async () => {
@@ -66,7 +69,7 @@ test("a file deleted mid-scan drops only that row, not the whole list", async ()
   // awaiting) listArtifacts(), reproduces that ordering -- confirmed
   // reliable (20/20) against this implementation, and confirmed to catch the
   // pre-fix single-try-around-the-whole-loop version returning [] instead.
-  const dir = join(artifactsDir(), "-home-taha-github-demo");
+  const dir = join(artifactsDir(), `${HOME_ENC}-github-demo`);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "survivor.html"), "<html></html>");
   const doomed = join(dir, "doomed.html");
@@ -82,7 +85,7 @@ test("a file deleted mid-scan drops only that row, not the whole list", async ()
 });
 
 test("sorts newest first", async () => {
-  const dir = join(artifactsDir(), "-home-taha-github-demo");
+  const dir = join(artifactsDir(), `${HOME_ENC}-github-demo`);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "old.html"), "<html></html>");
   await writeFile(join(dir, "new.html"), "<html></html>");
@@ -111,7 +114,7 @@ async function artifactServer() {
 }
 
 test("serves an artifact file and lists it via /api/artifacts", async () => {
-  const dir = join(artifactsDir(), "-home-taha-demo");
+  const dir = join(artifactsDir(), `${HOME_ENC}-demo`);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "test-artifact.html"), "<h1>hello artifact</h1>");
 
@@ -120,7 +123,7 @@ test("serves an artifact file and lists it via /api/artifacts", async () => {
     const list = await (await fetch(`${base}/api/artifacts`)).json();
     expect(list.some((a: any) => a.name === "test-artifact")).toBe(true);
 
-    const page = await fetch(`${base}/artifact/-home-taha-demo/test-artifact.html`);
+    const page = await fetch(`${base}/artifact/${HOME_ENC}-demo/test-artifact.html`);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
     expect(await page.text()).toContain("hello artifact");
@@ -201,7 +204,7 @@ test("a symlink placed inside the artifacts dir cannot be used to read a file ou
   // the lexical containment check passes trivially because the symlink's
   // own path is under artifactsDir() -- only realpath()-then-recheck closes
   // the gap, since stat()/Bun.file() follow the symlink to its real target.
-  const dir = join(artifactsDir(), "-home-taha-demo-symlink");
+  const dir = join(artifactsDir(), `${HOME_ENC}-demo-symlink`);
   await mkdir(dir, { recursive: true });
 
   const secretDir = await mkdtemp(join(tmpdir(), "htmlview-art-secret-"));
@@ -214,7 +217,7 @@ test("a symlink placed inside the artifacts dir cannot be used to read a file ou
 
   const { server, base } = await artifactServer();
   try {
-    const r = await fetch(`${base}/artifact/-home-taha-demo-symlink/escape.html`);
+    const r = await fetch(`${base}/artifact/${HOME_ENC}-demo-symlink/escape.html`);
     expect(r.status).not.toBe(200);
     const text = await r.text();
     expect(text).not.toContain(secretContents);
