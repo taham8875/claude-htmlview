@@ -1,10 +1,23 @@
 {
   "name": "claude-htmlview",
   "version": "0.1.0",
+  "description": "Read-only local web viewer for Claude Code transcripts, with correct Arabic/English bidi rendering, full-text search, and live updates.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taham8875/claude-htmlview.git"
+  },
   "type": "module",
   "private": true,
+  "engines": {
+    "bun": ">=1.1.0"
+  },
   "scripts": {
     "start": "bun run src/server.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
   }
 }
