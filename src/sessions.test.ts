@@ -1,5 +1,11 @@
 import { test, expect } from "bun:test";
-import { decodeProject, resolveEncodedPath, listSessions, findSession } from "./sessions";
+import {
+  decodeProject,
+  resolveEncodedPath,
+  listSessions,
+  findSession,
+  type SessionRoots,
+} from "./sessions";
 import { mkdtemp, mkdir, writeFile, utimes } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
@@ -159,4 +165,47 @@ test("findSession returns null rather than throwing for a traversal-shaped id", 
 test("findSession never lists subagent transcripts as sessions", async () => {
   const root = await fixtureDir();
   expect(await findSession("agent-x", root)).toBeNull();
+});
+
+async function dualProviderFixture(): Promise<SessionRoots> {
+  const claudeProjectsDir = await fixtureDir();
+  const codexSessionsDir = await mkdtemp(join(tmpdir(), "htmlview-codex-"));
+  const day = join(codexSessionsDir, "2026", "08", "17");
+  await mkdir(day, { recursive: true });
+  await writeFile(
+    join(day, "rollout-2026-08-17T10-00-00-019a1111-2222-7333-8444-555566667777.jsonl"),
+    await Bun.file("src/fixtures/codex-basic.jsonl").text()
+  );
+  await writeFile(
+    join(day, "rollout-2026-08-17T11-00-00-019a9999-8888-7777-8666-555544443333.jsonl"),
+    await Bun.file("src/fixtures/codex-edge.jsonl").text()
+  );
+  return { claudeProjectsDir, codexSessionsDir };
+}
+
+test("merges Claude and Codex sessions while excluding Codex subagents", async () => {
+  const roots = await dualProviderFixture();
+  const sessions = await listSessions(roots);
+
+  expect(sessions.map((session) => session.id)).toEqual([
+    "codex-019a1111-2222-7333-8444-555566667777",
+    "sess-a",
+  ]);
+  expect(sessions.map((session) => session.provider)).toEqual(["codex", "claude"]);
+  expect(sessions[0]).toMatchObject({
+    project: "~/github/demo",
+    projectPath: `${HOME_ENC}-github-demo`,
+    title: "Check the Codex transcript",
+  });
+});
+
+test("findSession dispatches provider-qualified Codex IDs", async () => {
+  const roots = await dualProviderFixture();
+  const found = await findSession("codex-019a1111-2222-7333-8444-555566667777", roots);
+
+  expect(found?.meta.provider).toBe("codex");
+  expect(found?.meta.project).toBe("~/github/demo");
+  expect(found?.turns).toHaveLength(2);
+  expect(await findSession("codex-../../../etc/passwd", roots)).toBeNull();
+  expect(await findSession("codex-019a9999-8888-7777-8666-555544443333", roots)).toBeNull();
 });

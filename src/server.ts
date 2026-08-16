@@ -6,6 +6,7 @@ import {
   newestSession,
   findSession,
   SESSION_ID_RE,
+  type SessionRoots,
 } from "./sessions";
 import { search } from "./search";
 import { refreshCache, buildCacheEntry } from "./searchcache";
@@ -69,6 +70,8 @@ export const BUN_IDLE_TIMEOUT_MS = 10_000;
 export const SSE_HEARTBEAT_MS = 4_000;
 
 export type ServerOptions = {
+  /** Explicit dual-provider roots. `projectsDir` remains the Claude-only compatibility seam. */
+  sessionRoots?: SessionRoots;
   projectsDir?: string;
   port?: number;
   /** Test seam: shorten the heartbeat so a test need not wait whole seconds. */
@@ -112,7 +115,8 @@ function bindWithFallback(
 }
 
 export async function createServer(opts: ServerOptions = {}) {
-  const projectsDir = opts.projectsDir ?? defaultProjectsDir();
+  const sessionInput = opts.sessionRoots ?? opts.projectsDir;
+  const projectsDir = opts.sessionRoots?.claudeProjectsDir ?? opts.projectsDir ?? defaultProjectsDir();
   const heartbeatMs = opts.heartbeatMs ?? SSE_HEARTBEAT_MS;
   const clients = new Set<(sessionId: string) => void>();
 
@@ -120,7 +124,7 @@ export async function createServer(opts: ServerOptions = {}) {
     const url = new URL(req.url);
     const path = url.pathname;
 
-    if (path === "/api/sessions") return json(await listSessions(projectsDir));
+    if (path === "/api/sessions") return json(await listSessions(sessionInput));
 
     if (path.startsWith("/api/session/")) {
       const raw = path.slice("/api/session/".length);
@@ -132,7 +136,7 @@ export async function createServer(opts: ServerOptions = {}) {
       }
       if (!SESSION_ID_RE.test(id)) return json({ error: "not found" }, 404);
 
-      const found = await findSession(id, projectsDir);
+      const found = await findSession(id, sessionInput);
       if (!found) return json({ error: "not found" }, 404);
       const { meta, turns } = found;
 
@@ -143,7 +147,7 @@ export async function createServer(opts: ServerOptions = {}) {
     }
 
     if (path === "/api/search") {
-      return json(await search(url.searchParams.get("q") ?? "", projectsDir));
+      return json(await search(url.searchParams.get("q") ?? "", sessionInput));
     }
 
     if (path === "/api/artifacts") return json(await listArtifacts());
@@ -212,7 +216,7 @@ export async function createServer(opts: ServerOptions = {}) {
     }
 
     if (path === "/live") {
-      const newest = await newestSession(projectsDir);
+      const newest = await newestSession(sessionInput);
       return new Response(null, {
         status: 302,
         headers: { location: newest ? `/s/${newest.id}` : "/" },
@@ -368,7 +372,7 @@ export async function createServer(opts: ServerOptions = {}) {
     }
     rebuilding.add(sessionId);
     try {
-      const found = await findSession(sessionId, projectsDir);
+      const found = await findSession(sessionId, sessionInput);
       if (found) await buildCacheEntry(found.meta);
     } catch {
       // Source vanished mid-rebuild, or a transient read error -- the next

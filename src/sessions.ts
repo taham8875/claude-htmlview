@@ -4,9 +4,18 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { parseTranscript, type Parsed, type Turn } from "./transcript";
+import { parseCodexTranscript } from "./codex-transcript";
+
+export type SessionProvider = "claude" | "codex";
+
+export type SessionRoots = {
+  claudeProjectsDir: string;
+  codexSessionsDir: string;
+};
 
 export type SessionMeta = {
   id: string;
+  provider: SessionProvider;
   project: string;
   projectPath: string;
   title: string;
@@ -18,7 +27,16 @@ export type SessionMeta = {
   file: string;
 };
 
-export const defaultProjectsDir = () => join(homedir(), ".claude", "projects");
+export const defaultProjectsDir = () =>
+  process.env.HTMLVIEW_CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
+
+export const defaultCodexSessionsDir = () =>
+  process.env.HTMLVIEW_CODEX_SESSIONS_DIR ?? join(homedir(), ".codex", "sessions");
+
+export const defaultSessionRoots = (): SessionRoots => ({
+  claudeProjectsDir: defaultProjectsDir(),
+  codexSessionsDir: defaultCodexSessionsDir(),
+});
 
 /** Cache: 17 distinct project dirs, resolved once each rather than per session. */
 const decodeCache = new Map<string, string>();
@@ -108,11 +126,20 @@ function activityOf(parsed: Parsed, mtimeMs: number): number {
   return Number.isNaN(ms) ? mtimeMs : ms;
 }
 
-function toMeta(id: string, dirName: string, file: string, mtimeMs: number, parsed: Parsed): SessionMeta {
+function toMeta(
+  id: string,
+  provider: SessionProvider,
+  project: string,
+  projectPath: string,
+  file: string,
+  mtimeMs: number,
+  parsed: Parsed
+): SessionMeta {
   return {
     id,
-    project: decodeProject(dirName),
-    projectPath: dirName,
+    provider,
+    project,
+    projectPath,
     title: parsed.title ?? parsed.turns[0]?.userText?.slice(0, 80) ?? id,
     turnCount: parsed.turns.length,
     activityMs: activityOf(parsed, mtimeMs),
@@ -121,9 +148,7 @@ function toMeta(id: string, dirName: string, file: string, mtimeMs: number, pars
   };
 }
 
-export async function listSessions(
-  projectsDir: string = defaultProjectsDir()
-): Promise<SessionMeta[]> {
+async function listClaudeSessions(projectsDir: string): Promise<SessionMeta[]> {
   const out: SessionMeta[] = [];
   // NON-recursive by design: "*/*.jsonl" excludes <session>/subagents/agent-*.jsonl
   const glob = new Glob("*/*.jsonl");
@@ -140,19 +165,72 @@ export async function listSessions(
       const parsed = parseTranscript(text);
       const id = basename(file, ".jsonl");
       const dirName = basename(dirname(file));
-      out.push(toMeta(id, dirName, file, st.mtimeMs, parsed));
+      out.push(toMeta(id, "claude", decodeProject(dirName), dirName, file, st.mtimeMs, parsed));
     } catch {
       continue; // deleted mid-scan, or unreadable — drop from index, never crash
     }
   }
 
-  return out.sort((a, b) => b.activityMs - a.activityMs);
+  return out;
 }
 
-export async function newestSession(
-  projectsDir: string = defaultProjectsDir()
-): Promise<SessionMeta | null> {
-  return (await listSessions(projectsDir))[0] ?? null;
+const displayPath = (path: string) => {
+  const home = homedir();
+  return path === home ? "~" : path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+};
+
+async function listCodexSessions(sessionsDir: string): Promise<SessionMeta[]> {
+  const out: SessionMeta[] = [];
+  let files: string[] = [];
+  try {
+    for await (const file of new Glob("**/*.jsonl").scan({ cwd: sessionsDir, absolute: true })) {
+      files.push(file);
+    }
+  } catch {
+    return [];
+  }
+
+  for (const file of files) {
+    try {
+      const [st, text] = await Promise.all([stat(file), Bun.file(file).text()]);
+      const parsed = parseCodexTranscript(text);
+      if (!parsed.id || !parsed.cwd || parsed.isSubagent) continue;
+      out.push(
+        toMeta(
+          `codex-${parsed.id}`,
+          "codex",
+          displayPath(parsed.cwd),
+          parsed.cwd.replaceAll("/", "-"),
+          file,
+          st.mtimeMs,
+          parsed
+        )
+      );
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+/** A string keeps the original Claude-only test/API seam; omitted means both providers. */
+function rootsOf(input?: string | SessionRoots): { claude: string | null; codex: string | null } {
+  if (typeof input === "string") return { claude: input, codex: null };
+  const roots = input ?? defaultSessionRoots();
+  return { claude: roots.claudeProjectsDir, codex: roots.codexSessionsDir };
+}
+
+export async function listSessions(input?: string | SessionRoots): Promise<SessionMeta[]> {
+  const roots = rootsOf(input);
+  const [claude, codex] = await Promise.all([
+    roots.claude ? listClaudeSessions(roots.claude) : [],
+    roots.codex ? listCodexSessions(roots.codex) : [],
+  ]);
+  return [...claude, ...codex].sort((a, b) => b.activityMs - a.activityMs);
+}
+
+export async function newestSession(input?: string | SessionRoots): Promise<SessionMeta | null> {
+  return (await listSessions(input))[0] ?? null;
 }
 
 /**
@@ -179,9 +257,9 @@ export const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
  * projectsDir. An unvalidated id containing "/" or ".." segments is a
  * pattern-injection / path-traversal vector this approach didn't have before.
  */
-export async function findSession(
+async function findClaudeSession(
   id: string,
-  projectsDir: string = defaultProjectsDir()
+  projectsDir: string
 ): Promise<{ meta: SessionMeta; turns: Turn[] } | null> {
   if (!SESSION_ID_RE.test(id)) return null;
 
@@ -202,8 +280,65 @@ export async function findSession(
     const [st, text] = await Promise.all([stat(file), Bun.file(file).text()]);
     const parsed = parseTranscript(text);
     const dirName = basename(dirname(file));
-    return { meta: toMeta(id, dirName, file, st.mtimeMs, parsed), turns: parsed.turns };
+    return {
+      meta: toMeta(id, "claude", decodeProject(dirName), dirName, file, st.mtimeMs, parsed),
+      turns: parsed.turns,
+    };
   } catch {
     return null; // deleted mid-request, or unreadable
   }
+}
+
+async function findCodexSession(
+  publicId: string,
+  sessionsDir: string
+): Promise<{ meta: SessionMeta; turns: Turn[] } | null> {
+  const rawId = publicId.slice("codex-".length);
+  if (!SESSION_ID_RE.test(rawId)) return null;
+
+  let file: string | undefined;
+  try {
+    for await (const candidate of new Glob(`**/*${rawId}.jsonl`).scan({
+      cwd: sessionsDir,
+      absolute: true,
+    })) {
+      file = candidate;
+      break;
+    }
+  } catch {
+    return null;
+  }
+  if (!file) return null;
+
+  try {
+    const [st, text] = await Promise.all([stat(file), Bun.file(file).text()]);
+    const parsed = parseCodexTranscript(text);
+    if (parsed.id !== rawId || !parsed.cwd || parsed.isSubagent) return null;
+    return {
+      meta: toMeta(
+        publicId,
+        "codex",
+        displayPath(parsed.cwd),
+        parsed.cwd.replaceAll("/", "-"),
+        file,
+        st.mtimeMs,
+        parsed
+      ),
+      turns: parsed.turns,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function findSession(
+  id: string,
+  input?: string | SessionRoots
+): Promise<{ meta: SessionMeta; turns: Turn[] } | null> {
+  if (!SESSION_ID_RE.test(id)) return null;
+  const roots = rootsOf(input);
+  if (id.startsWith("codex-")) {
+    return roots.codex ? findCodexSession(id, roots.codex) : null;
+  }
+  return roots.claude ? findClaudeSession(id, roots.claude) : null;
 }

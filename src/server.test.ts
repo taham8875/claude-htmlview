@@ -33,6 +33,22 @@ async function fixtureServer(opts: { heartbeatMs?: number } = {}) {
   return { server, base: `http://127.0.0.1:${server.port}`, sessionFile, fixtureBody };
 }
 
+async function dualProviderServer() {
+  const claudeProjectsDir = await mkdtemp(join(tmpdir(), "htmlview-s-claude-"));
+  const codexSessionsDir = await mkdtemp(join(tmpdir(), "htmlview-s-codex-"));
+  const codexDay = join(codexSessionsDir, "2026", "08", "17");
+  await mkdir(codexDay, { recursive: true });
+  await writeFile(
+    join(codexDay, "rollout-2026-08-17T10-00-00-019a1111-2222-7333-8444-555566667777.jsonl"),
+    await Bun.file("src/fixtures/codex-basic.jsonl").text()
+  );
+  const server = await createServer({
+    sessionRoots: { claudeProjectsDir, codexSessionsDir },
+    port: 0,
+  });
+  return { server, base: `http://127.0.0.1:${server.port}` };
+}
+
 test("binds to 127.0.0.1 and never 0.0.0.0", async () => {
   const { server } = await fixtureServer();
   expect(server.hostname).toBe("127.0.0.1");
@@ -54,6 +70,23 @@ test("GET /api/session/:id returns turns", async () => {
   const body = await (await fetch(`${base}/api/session/sess-a`)).json();
   expect(body.turns.length).toBe(2);
   expect(body.meta.id).toBe("sess-a");
+  server.stop();
+});
+
+test("session routes include Codex when both provider roots are configured", async () => {
+  const { server, base } = await dualProviderServer();
+  const sessions = await (await fetch(`${base}/api/sessions`)).json();
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({
+    id: "codex-019a1111-2222-7333-8444-555566667777",
+    provider: "codex",
+  });
+
+  const session = await (
+    await fetch(`${base}/api/session/codex-019a1111-2222-7333-8444-555566667777`)
+  ).json();
+  expect(session.turns).toHaveLength(2);
+  expect(session.meta.project).toBe("~/github/demo");
   server.stop();
 });
 
