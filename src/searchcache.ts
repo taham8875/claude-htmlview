@@ -1,8 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { parseTranscript } from "./transcript";
-import { listSessions, type SessionMeta } from "./sessions";
+import { parseTranscript, type Parsed } from "./transcript";
+import { parseCodexTranscript } from "./codex-transcript";
+import { listSessions, type SessionMeta, type SessionRoots } from "./sessions";
 import { normalize } from "./normalize";
 
 export type CacheLine = {
@@ -36,8 +37,8 @@ const unescape = (s: string) =>
  * Extract only human and assistant prose. Tool inputs/outputs and thinking are
  * excluded: they are mostly file contents and would swamp search results.
  */
-function extractLines(jsonl: string): string[] {
-  const { turns } = parseTranscript(jsonl);
+function extractLines(parsed: Parsed): string[] {
+  const { turns } = parsed;
   const out: string[] = [];
   for (const turn of turns) {
     if (turn.userText?.trim()) {
@@ -63,7 +64,8 @@ export async function buildCacheEntry(session: SessionMeta): Promise<void> {
   // timestamped files is ambiguous: they can tie within the same millisecond,
   // and the cache file's mtime also drifts if it's copied, restored, or
   // touched. Recording it is exact and immune to that drift.
-  const body = [HEADER + session.mtimeMs, ...extractLines(text)].join("\n");
+  const parsed = session.provider === "codex" ? parseCodexTranscript(text) : parseTranscript(text);
+  const body = [HEADER + session.mtimeMs, ...extractLines(parsed)].join("\n");
   await Bun.write(join(cacheDir(), `${session.id}.txt`), body);
 }
 
@@ -100,8 +102,8 @@ export async function readCacheEntry(sessionId: string): Promise<CacheLine[]> {
 }
 
 /** Rebuild any cache entry whose source transcript is newer. Returns count rebuilt. */
-export async function refreshCache(projectsDir?: string): Promise<number> {
-  const sessions = await listSessions(projectsDir);
+export async function refreshCache(input?: string | SessionRoots): Promise<number> {
+  const sessions = await listSessions(input);
   await mkdir(cacheDir(), { recursive: true });
   let rebuilt = 0;
   for (const s of sessions) {

@@ -1,6 +1,6 @@
 import { normalize } from "./normalize";
 import { readCacheEntry, type CacheLine } from "./searchcache";
-import { listSessions } from "./sessions";
+import { listSessions, type SessionRoots } from "./sessions";
 
 export type Hit = {
   sessionId: string;
@@ -85,11 +85,11 @@ export function makeSnippet(
   };
 }
 
-export async function search(query: string, projectsDir?: string): Promise<Hit[]> {
+export async function search(query: string, input?: string | SessionRoots): Promise<Hit[]> {
   const q = normalize(query).trim();
   if (!q) return [];
 
-  const sessions = await listSessions(projectsDir); // already sorted newest-first
+  const sessions = await listSessions(input); // already sorted newest-first
   const hits: Hit[] = [];
   for (const session of sessions) {
     for (const line of await readCacheEntry(session.id)) {

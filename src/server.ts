@@ -2,6 +2,7 @@ import { join, resolve, sep } from "node:path";
 import { stat, realpath } from "node:fs/promises";
 import {
   defaultProjectsDir,
+  defaultSessionRoots,
   listSessions,
   newestSession,
   findSession,
@@ -10,7 +11,7 @@ import {
 } from "./sessions";
 import { search } from "./search";
 import { refreshCache, buildCacheEntry } from "./searchcache";
-import { watchProjects } from "./watch";
+import { watchProjects, watchSessions } from "./watch";
 import { listArtifacts, artifactsDir } from "./artifacts";
 
 const PUBLIC = resolve(join(import.meta.dir, "..", "public"));
@@ -116,6 +117,7 @@ function bindWithFallback(
 
 export async function createServer(opts: ServerOptions = {}) {
   const sessionInput = opts.sessionRoots ?? opts.projectsDir;
+  const sessionRoots = opts.sessionRoots ?? (opts.projectsDir ? null : defaultSessionRoots());
   const projectsDir = opts.sessionRoots?.claudeProjectsDir ?? opts.projectsDir ?? defaultProjectsDir();
   const heartbeatMs = opts.heartbeatMs ?? SSE_HEARTBEAT_MS;
   const clients = new Set<(sessionId: string) => void>();
@@ -384,7 +386,7 @@ export async function createServer(opts: ServerOptions = {}) {
     }
   }
 
-  const watcher = await watchProjects(projectsDir, (sessionId) => {
+  const onSessionChange = (sessionId: string) => {
     void rebuildCacheFor(sessionId); // never awaited -- must not delay the SSE broadcast below
 
     for (const send of clients) {
@@ -397,7 +399,10 @@ export async function createServer(opts: ServerOptions = {}) {
         clients.delete(send);
       }
     }
-  });
+  };
+  const watcher = sessionRoots
+    ? await watchSessions(sessionRoots, onSessionChange)
+    : await watchProjects(projectsDir, onSessionChange);
 
   // server.stop() also tears down the watcher, so a caller only has one
   // handle to manage. Guarded with `stopped` so a second call — Bun's own

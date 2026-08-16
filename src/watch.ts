@@ -1,25 +1,45 @@
 import { watch, type FSWatcher } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
+import type { SessionRoots } from "./sessions";
 
 export type WatchHandle = { close(): void };
 
-/**
- * Watch ~/.claude/projects two levels deep: the root (for new project dirs)
- * plus one watcher per project dir (for session files). Never recursive —
- * recursive fs.watch support varies by platform, and deeper levels are
- * subagent transcripts, which are out of scope for v1.
- *
- * `onChange` fires once per session id after a burst of writes settles for
- * `debounceMs`, coalescing the duplicate/rename+change events a single save
- * can produce. It never fires after close() — see close() below.
- */
-export async function watchProjects(
-  projectsDir: string,
+type WatchSource = {
+  root: string;
+  maxDepth: number;
+  publicId(file: string): string | null;
+};
+
+const claudeSource = (root: string): WatchSource => ({
+  root,
+  maxDepth: 1,
+  publicId(file) {
+    const parts = relative(root, file).split(sep);
+    return parts.length === 2 && file.endsWith(".jsonl")
+      ? basename(file, ".jsonl")
+      : null;
+  },
+});
+
+const CODEX_FILE_ID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+const codexSource = (root: string): WatchSource => ({
+  root,
+  maxDepth: 3,
+  publicId(file) {
+    const id = basename(file).match(CODEX_FILE_ID_RE)?.[1];
+    return id ? `codex-${id}` : null;
+  },
+});
+
+async function watchSources(
+  sources: WatchSource[],
   onChange: (sessionId: string) => void,
-  debounceMs = 120
+  debounceMs: number
 ): Promise<WatchHandle> {
   const watchers: FSWatcher[] = [];
+  const watched = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   let closed = false;
 
@@ -35,57 +55,80 @@ export async function watchProjects(
     );
   };
 
-  const watchProject = (dir: string) => {
+  const attachTree = async (source: WatchSource, dir: string, depth: number): Promise<void> => {
+    if (closed || watched.has(dir) || depth > source.maxDepth) return;
+    watched.add(dir);
+
+    let entries;
     try {
-      const w = watch(dir, (_event, filename) => {
-        if (!filename || !filename.endsWith(".jsonl")) return;
-        emit(filename.slice(0, -".jsonl".length));
-      });
-      // A watched project dir can be removed later (e.g. session pruned
-      // elsewhere); on some platforms that surfaces as an 'error' event on
-      // the FSWatcher, which is an EventEmitter — unhandled 'error' throws
-      // and would crash the whole process. Swallow it, matching the
-      // read-only/never-crash posture the rest of this project takes.
-      w.on("error", () => {});
-      watchers.push(w);
+      entries = await readdir(dir, { withFileTypes: true });
     } catch {
-      // dir vanished between listing and watching — ignore
+      watched.delete(dir);
+      return;
     }
+
+    try {
+      const handle = watch(dir, (_event, filename) => {
+        if (!filename || closed) return;
+        const file = join(dir, String(filename));
+        if (file.endsWith(".jsonl")) {
+          const id = source.publicId(file);
+          if (id) emit(id);
+          return;
+        }
+        if (depth < source.maxDepth) void attachTree(source, file, depth + 1);
+      });
+      handle.on("error", () => {});
+      watchers.push(handle);
+    } catch {
+      watched.delete(dir);
+      return;
+    }
+
+    if (depth >= source.maxDepth) return;
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => attachTree(source, join(dir, entry.name), depth + 1))
+    );
   };
 
-  let entries: string[] = [];
-  try {
-    entries = (await readdir(projectsDir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-  } catch {
-    return { close() {} }; // missing projects dir — nothing to watch
-  }
-
-  for (const name of entries) watchProject(join(projectsDir, name));
-
-  // Root watcher: pick up project dirs created after startup.
-  try {
-    const root = watch(projectsDir, (_event, filename) => {
-      if (!filename || filename.endsWith(".jsonl")) return;
-      watchProject(join(projectsDir, filename));
-    });
-    root.on("error", () => {});
-    watchers.push(root);
-  } catch {
-    // ignore
-  }
+  await Promise.all(sources.map((source) => attachTree(source, source.root, 0)));
 
   return {
     close() {
+      if (closed) return;
       closed = true;
-      for (const t of timers.values()) clearTimeout(t);
+      for (const timer of timers.values()) clearTimeout(timer);
       timers.clear();
-      for (const w of watchers) {
+      for (const handle of watchers) {
         try {
-          w.close();
+          handle.close();
         } catch {}
       }
+      watchers.length = 0;
     },
   };
+}
+
+/** Watch the original Claude-only tree. Kept as the public compatibility seam. */
+export function watchProjects(
+  projectsDir: string,
+  onChange: (sessionId: string) => void,
+  debounceMs = 120
+): Promise<WatchHandle> {
+  return watchSources([claudeSource(projectsDir)], onChange, debounceMs);
+}
+
+/** Watch both provider trees and emit the same public IDs used by routes and caches. */
+export function watchSessions(
+  roots: SessionRoots,
+  onChange: (sessionId: string) => void,
+  debounceMs = 120
+): Promise<WatchHandle> {
+  return watchSources(
+    [claudeSource(roots.claudeProjectsDir), codexSource(roots.codexSessionsDir)],
+    onChange,
+    debounceMs
+  );
 }

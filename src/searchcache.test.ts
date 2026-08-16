@@ -21,9 +21,23 @@ afterAll(async () => {
 });
 
 const meta = (id: string): SessionMeta => ({
-  id, project: "~/demo", projectPath: "-home-taha-demo",
+  id, provider: "claude", project: "~/demo", projectPath: "-home-taha-demo",
   title: "t", turnCount: 2, activityMs: Date.now(), mtimeMs: Date.now(),
   file: "src/fixtures/basic.jsonl",
+});
+
+test("indexes Codex prose under its provider-qualified cache ID", async () => {
+  const id = "codex-019a1111-2222-7333-8444-555566667777";
+  await buildCacheEntry({
+    ...meta(id),
+    provider: "codex",
+    file: "src/fixtures/codex-basic.jsonl",
+  });
+
+  const lines = await readCacheEntry(id);
+  expect(lines.some((line) => line.original === "Check the Codex transcript")).toBe(true);
+  expect(lines.some((line) => line.original === "The transcript is valid.")).toBe(true);
+  expect(await Bun.file(join(cacheDir(), `${id}.txt`)).exists()).toBe(true);
 });
 
 test("writes a cache entry and reads it back", async () => {
