@@ -1,9 +1,10 @@
 # claude-htmlview
 
 A local, read-only web viewer for [Claude Code](https://claude.com/claude-code)
-session transcripts. It reads `~/.claude/projects` and renders your sessions in
-a browser, with correct mixed Arabic/English rendering, full-text search, and
-live updates while a session is running.
+and [Codex](https://developers.openai.com/codex/) session transcripts. It reads
+their local history and renders both in one browser, with correct mixed
+Arabic/English rendering, full-text search, and live updates while a session is
+running.
 
 It exists to solve two concrete problems:
 
@@ -11,17 +12,17 @@ It exists to solve two concrete problems:
    breaks on mixed-direction text — RTL words next to LTR code, punctuation, and
    numbers. This server applies its own bidi rules so the same content reads
    correctly in a browser.
-2. **HTML artifacts get thrown away.** Claude Code can produce HTML artifacts
+2. **HTML artifacts get thrown away.** Coding agents can produce HTML artifacts
    during a session, but there is nowhere for them to persist and be browsed
    later. This server hosts a cross-linked library of them.
 
 Nothing leaves your machine: the server binds to `127.0.0.1` only, and never
-writes to `~/.claude/projects`.
+writes to either transcript source.
 
 ## Requirements
 
 - [Bun](https://bun.sh) 1.1 or newer. No Node, no build step.
-- Claude Code, with at least one session recorded under `~/.claude/projects`.
+- Claude Code or Codex, with at least one local session.
 
 ## Install and run
 
@@ -62,12 +63,14 @@ activity" pill instead of yanking you to the bottom.
 
 ## Configuration
 
-Reads `~/.claude/projects` **read-only**. All writes go under
+Reads `~/.claude/projects` and `~/.codex/sessions` **read-only**. All writes go under
 `~/.claude/htmlview/`, split across two independently overridable directories —
 useful for pointing either at a different location, or isolating them in tests:
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `HTMLVIEW_CLAUDE_PROJECTS_DIR` | Claude Code transcript source | `~/.claude/projects` |
+| `HTMLVIEW_CODEX_SESSIONS_DIR` | Codex transcript source | `~/.codex/sessions` |
 | `HTMLVIEW_CACHE_DIR` | Derived full-text search cache | `~/.claude/htmlview/cache` |
 | `HTMLVIEW_ARTIFACTS_DIR` | Artifact library | `~/.claude/htmlview/artifacts` |
 
@@ -82,16 +85,22 @@ Artifacts are self-contained HTML pages written to:
 ```
 
 `<encoded-project>` is the working directory with `/` replaced by `-`, matching
-Claude Code's own project-directory convention. Browse the full library at
+the viewer's shared project convention. Browse the full library at
 `/artifacts`; a single artifact is served at
 `/artifact/<encoded-project>/<file>.html`.
 
-To let Claude Code write them for you, install the bundled skill:
+Install the bundled skill for either agent that should write artifacts:
 
 ```bash
 mkdir -p ~/.claude/skills
 cp -r skills/htmlview-artifact ~/.claude/skills/
+
+mkdir -p ~/.codex/skills
+cp -r skills/htmlview-artifact ~/.codex/skills/
 ```
+
+Both copies write to the same library. Set `HTMLVIEW_ARTIFACTS_DIR` in the
+agent environment if you use a custom artifact location.
 
 ## Security
 
@@ -113,7 +122,7 @@ Do not put this behind a reverse proxy.
 ## Development
 
 ```bash
-bun test         # 139 tests
+bun test
 bun run typecheck
 ```
 
@@ -134,14 +143,14 @@ Deliberately out of scope, recorded so they are not re-litigated:
   rendered turn.
 - **Search covers prose only.** Tool inputs and outputs are not indexed.
 - **No ranking.** Results come back in match order, not scored by relevance.
-- **No subagent transcripts.** Only top-level sessions are indexed; anything
-  under `<session>/subagents/` is skipped.
+- **No subagent transcripts.** Only top-level Claude and Codex sessions are
+  indexed.
 - **No thread → artifact links.** The transcript carries no reliable signal
   connecting a turn to an artifact it produced.
 
-**Thinking blocks are never rendered**, because Claude Code does not persist
-thinking content: every thinking block in the transcript has `"thinking": ""`
-and only an opaque `signature`. Rendering an empty block would be visual noise.
+**Thinking blocks are never rendered.** Claude Code persists only an opaque
+signature in the observed transcripts, and Codex reasoning is encrypted.
+Rendering either would produce no readable content.
 
 ## License
 

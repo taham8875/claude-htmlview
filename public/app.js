@@ -277,6 +277,7 @@ function sessionRow(s) {
   // CSS re-aligns it to the row's edge without touching that order.
   meta.setAttribute("dir", "ltr");
   meta.textContent =
+    `${s.provider === "codex" ? "Codex" : "Claude"} · ` +
     `${s.turnCount} turn${s.turnCount === 1 ? "" : "s"} · ` +
     new Date(s.activityMs).toLocaleString();
   a.append(title, meta);
@@ -436,7 +437,7 @@ async function renderThread(id) {
   setBlockDir(h);
   const sub = document.createElement("div");
   sub.className = "muted path";
-  sub.textContent = data.meta.project;
+  sub.textContent = `${data.meta.project} · ${data.meta.provider === "codex" ? "Codex" : "Claude"}`;
   setBlockDir(sub); // rule 1: project names are file paths but can embed non-Latin text
   app.replaceChildren(h, sub);
 

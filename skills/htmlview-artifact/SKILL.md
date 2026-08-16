@@ -5,12 +5,13 @@ description: Use when output would be substantially clearer as a standalone HTML
 
 # Writing an HTML artifact
 
-Write a self-contained HTML file to:
+Write a self-contained HTML file under `$HTMLVIEW_ARTIFACTS_DIR` when that
+environment variable is non-empty. Otherwise use:
 
 `~/.claude/htmlview/artifacts/<encoded-project>/<YYYY-MM-DD-HHmm>-<slug>.html`
 
 `<encoded-project>` is the current working directory with every `/` replaced
-by `-`, matching Claude Code's own convention
+by `-`, matching the viewer's shared project convention
 (`/home/you/code/myapp` -> `-home-you-code-myapp`).
 
 Browse the library at `http://127.0.0.1:7317/artifacts`. A single artifact is

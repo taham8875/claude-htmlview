@@ -1,7 +1,7 @@
 {
   "name": "claude-htmlview",
   "version": "0.1.0",
-  "description": "Read-only local web viewer for Claude Code transcripts, with correct Arabic/English bidi rendering, full-text search, and live updates.",
+  "description": "Read-only local web viewer for Claude Code and Codex transcripts, with correct Arabic/English bidi rendering, full-text search, and live updates.",
   "license": "MIT",
   "repository": {
     "type": "git",
