@@ -95,8 +95,8 @@ Install the bundled skill for either agent that should write artifacts:
 mkdir -p ~/.claude/skills
 cp -r skills/htmlview-artifact ~/.claude/skills/
 
-mkdir -p ~/.codex/skills
-cp -r skills/htmlview-artifact ~/.codex/skills/
+mkdir -p ~/.agents/skills
+cp -r skills/htmlview-artifact ~/.agents/skills/
 ```
 
 Both copies write to the same library. Set `HTMLVIEW_ARTIFACTS_DIR` in the

@@ -44,6 +44,12 @@ generating it. When in doubt, answer in the terminal.
 
 ## Requirements
 
+- **Visual direction.** Use dark mode with a true black (`#000`) background and
+  white primary text. Keep the layout information-dense, flat, and free of
+  decorative card or pill chrome. Start sections with direct headings, without
+  light-gray subtitle lines above them. Keep copy minimal and use no em dashes.
+  Draw diagrams, graphs, or other visualizations when they materially improve
+  understanding.
 - **Self-contained.** No CDN scripts, no external stylesheets, no remote fonts
   or images, no network calls of any kind. The page must render fully offline.
 - **Bidi-safe.** Set `dir="auto"` on every block element, force `dir="ltr"` on
