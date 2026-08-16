@@ -1,0 +1,14 @@
+{"timestamp":"2026-08-17T10:00:00.000Z","type":"session_meta","payload":{"id":"019a1111-2222-7333-8444-555566667777","timestamp":"2026-08-17T10:00:00.000Z","cwd":"/home/taha/github/demo","originator":"codex-tui","source":"cli"}}
+{"timestamp":"2026-08-17T10:00:00.100Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden project instructions"}]}}
+{"timestamp":"2026-08-17T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the Codex transcript"},{"type":"input_image","image_url":"data:image/png;base64,SECRET"}]}}
+{"timestamp":"2026-08-17T10:00:01.001Z","type":"event_msg","payload":{"type":"user_message","message":"Check the Codex transcript"}}
+{"timestamp":"2026-08-17T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I will inspect it."}]}}
+{"timestamp":"2026-08-17T10:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}","call_id":"call-1"}}
+{"timestamp":"2026-08-17T10:00:03.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"/home/taha/github/demo"}}
+{"timestamp":"2026-08-17T10:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch","call_id":"call-2"}}
+{"timestamp":"2026-08-17T10:00:04.100Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","output":"Done!"}}
+{"timestamp":"2026-08-17T10:00:05.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"encrypted_content":"opaque"}}
+{"timestamp":"2026-08-17T10:00:06.000Z","type":"event_msg","payload":{"type":"agent_message","message":"duplicate mirror"}}
+{"timestamp":"2026-08-17T10:00:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"The transcript is valid."}]}}
+{"timestamp":"2026-08-17T10:01:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Thanks"}]}}
+{"timestamp":"2026-08-17T10:01:01.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"You are welcome."}]}}
