@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { listArtifacts, artifactsDir } from "./artifacts";
+import { listArtifacts, artifactsDir, artifactRoots } from "./artifacts";
 import { createServer } from "./server";
 import { mkdtemp, mkdir, writeFile, rm, utimes, symlink, unlink } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
@@ -10,8 +10,8 @@ const HOME_ENC = homedir().replaceAll("/", "-");
 
 // Redirect artifactsDir() to a temp dir for the whole file. Without an
 // override seam here, listArtifacts() reads from the user's real
-// ~/.claude/htmlview/artifacts -- read-only, so not destructive, but it makes
-// assertions non-deterministic (depends on whatever the user has on disk).
+// real primary and legacy libraries -- read-only, so not destructive, but it
+// makes assertions non-deterministic (depends on whatever the user has on disk).
 // Mirrors the HTMLVIEW_CACHE_DIR seam in searchcache.ts.
 let tmpRoot: string;
 const savedEnv = process.env.HTMLVIEW_ARTIFACTS_DIR;
@@ -29,11 +29,25 @@ test("returns [] when the artifacts dir does not exist", async () => {
   expect(await listArtifacts()).toEqual([]);
 });
 
-test("artifactsDir resolves under ~/.claude/htmlview when unoverridden", () => {
+test("artifactsDir uses the provider-neutral data directory when unoverridden", () => {
   const saved = process.env.HTMLVIEW_ARTIFACTS_DIR;
   delete process.env.HTMLVIEW_ARTIFACTS_DIR;
   try {
-    expect(artifactsDir()).toContain("/.claude/htmlview/");
+    expect(artifactsDir()).toBe(join(homedir(), ".local", "share", "claude-htmlview", "artifacts"));
+  } finally {
+    if (saved === undefined) delete process.env.HTMLVIEW_ARTIFACTS_DIR;
+    else process.env.HTMLVIEW_ARTIFACTS_DIR = saved;
+  }
+});
+
+test("default artifact roots include the new library before the legacy library", () => {
+  const saved = process.env.HTMLVIEW_ARTIFACTS_DIR;
+  delete process.env.HTMLVIEW_ARTIFACTS_DIR;
+  try {
+    expect(artifactRoots()).toEqual([
+      join(homedir(), ".local", "share", "claude-htmlview", "artifacts"),
+      join(homedir(), ".claude", "htmlview", "artifacts"),
+    ]);
   } finally {
     if (saved === undefined) delete process.env.HTMLVIEW_ARTIFACTS_DIR;
     else process.env.HTMLVIEW_ARTIFACTS_DIR = saved;
@@ -50,6 +64,43 @@ test("lists an artifact with decoded project and href", async () => {
   expect(out[0]!.name).toBe("chart");
   expect(out[0]!.project).toBe("~/github/demo");
   expect(out[0]!.href).toBe(`/artifact/${HOME_ENC}-github-demo/chart.html`);
+});
+
+test("lists artifacts from the legacy library", async () => {
+  const primary = await mkdtemp(join(tmpdir(), "htmlview-art-primary-"));
+  const legacy = await mkdtemp(join(tmpdir(), "htmlview-art-legacy-"));
+  try {
+    const dir = join(legacy, `${HOME_ENC}-github-legacy`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "legacy.html"), "<html>legacy</html>");
+
+    const out = await listArtifacts([primary, legacy]);
+
+    expect(out.map((artifact) => artifact.name)).toContain("legacy");
+  } finally {
+    await rm(primary, { recursive: true, force: true });
+    await rm(legacy, { recursive: true, force: true });
+  }
+});
+
+test("prefers the primary artifact when both libraries contain the same URL", async () => {
+  const primary = await mkdtemp(join(tmpdir(), "htmlview-art-primary-"));
+  const legacy = await mkdtemp(join(tmpdir(), "htmlview-art-legacy-"));
+  const relativeDir = `${HOME_ENC}-github-shared`;
+  try {
+    await mkdir(join(primary, relativeDir), { recursive: true });
+    await mkdir(join(legacy, relativeDir), { recursive: true });
+    await writeFile(join(primary, relativeDir, "shared.html"), "<html>primary</html>");
+    await writeFile(join(legacy, relativeDir, "shared.html"), "<html>legacy</html>");
+
+    const out = await listArtifacts([primary, legacy]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.file).toBe(join(primary, relativeDir, "shared.html"));
+  } finally {
+    await rm(primary, { recursive: true, force: true });
+    await rm(legacy, { recursive: true, force: true });
+  }
 });
 
 test("a file deleted mid-scan drops only that row, not the whole list", async () => {
@@ -107,9 +158,9 @@ test("sorts newest first", async () => {
 // ~/.claude/projects) so these tests exercise only the artifact route and
 // never touch the user's real sessions or search cache.
 
-async function artifactServer() {
+async function artifactServer(artifactRoots?: string[]) {
   const projectsDir = await mkdtemp(join(tmpdir(), "htmlview-art-proj-"));
-  const server = await createServer({ projectsDir, port: 0 });
+  const server = await createServer({ projectsDir, port: 0, artifactRoots });
   return { server, base: `http://127.0.0.1:${server.port}`, projectsDir };
 }
 
@@ -130,6 +181,28 @@ test("serves an artifact file and lists it via /api/artifacts", async () => {
   } finally {
     server.stop();
     await rm(join(dir, "test-artifact.html"), { force: true });
+  }
+});
+
+test("serves an artifact that exists only in the legacy library", async () => {
+  const primary = await mkdtemp(join(tmpdir(), "htmlview-art-primary-"));
+  const legacy = await mkdtemp(join(tmpdir(), "htmlview-art-legacy-"));
+  const relativeDir = `${HOME_ENC}-legacy-serving`;
+  await mkdir(join(legacy, relativeDir), { recursive: true });
+  await writeFile(join(legacy, relativeDir, "legacy.html"), "<h1>legacy artifact</h1>");
+
+  const { server, base } = await artifactServer([primary, legacy]);
+  try {
+    const list = await (await fetch(`${base}/api/artifacts`)).json();
+    expect(list.map((artifact: any) => artifact.name)).toContain("legacy");
+
+    const page = await fetch(`${base}/artifact/${relativeDir}/legacy.html`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("legacy artifact");
+  } finally {
+    server.stop();
+    await rm(primary, { recursive: true, force: true });
+    await rm(legacy, { recursive: true, force: true });
   }
 });
 

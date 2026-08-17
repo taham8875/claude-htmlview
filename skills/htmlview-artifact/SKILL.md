@@ -8,7 +8,10 @@ description: Use when output would be substantially clearer as a standalone HTML
 Write a self-contained HTML file under `$HTMLVIEW_ARTIFACTS_DIR` when that
 environment variable is non-empty. Otherwise use:
 
-`~/.claude/htmlview/artifacts/<encoded-project>/<YYYY-MM-DD-HHmm>-<slug>.html`
+`~/.local/share/claude-htmlview/artifacts/<encoded-project>/<YYYY-MM-DD-HHmm>-<slug>.html`
+
+The viewer also reads the legacy `~/.claude/htmlview/artifacts` library. Write
+new artifacts only to the path above unless the environment overrides it.
 
 `<encoded-project>` is the current working directory with every `/` replaced
 by `-`, matching the viewer's shared project convention

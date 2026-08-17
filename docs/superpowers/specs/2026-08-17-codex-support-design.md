@@ -82,10 +82,10 @@ uses the already-normalized parsed turns, independent of provider.
 
 ## Artifacts and Configuration
 
-The existing artifact location remains `~/.claude/htmlview/artifacts` for
-backward compatibility. Both installed copies of the skill write there, so the
-library is shared. `HTMLVIEW_ARTIFACTS_DIR` remains the migration-free escape
-hatch for a neutral custom location.
+The artifact library defaults to `~/.local/share/claude-htmlview/artifacts` so
+Claude Code and Codex share a provider-neutral location. The viewer continues
+to read `~/.claude/htmlview/artifacts` for migration-free compatibility.
+`HTMLVIEW_ARTIFACTS_DIR` remains the explicit-location escape hatch.
 
 Add `HTMLVIEW_CLAUDE_PROJECTS_DIR` and `HTMLVIEW_CODEX_SESSIONS_DIR` overrides
 for source roots. Existing programmatic `projectsDir` test seams remain valid
@@ -103,4 +103,3 @@ Add sanitized Codex fixtures and focused tests for parsing, subagent exclusion,
 recursive discovery, provider-qualified lookup, merged ordering, provider-safe
 cache entries, and live update IDs. Keep the existing Claude suite unchanged
 where possible. Final verification is `bun test` and `bun run typecheck`.
-

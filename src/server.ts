@@ -12,7 +12,7 @@ import {
 import { search } from "./search";
 import { refreshCache, buildCacheEntry } from "./searchcache";
 import { watchProjects, watchSessions } from "./watch";
-import { listArtifacts, artifactsDir } from "./artifacts";
+import { listArtifacts, artifactRoots as defaultArtifactRoots } from "./artifacts";
 
 const PUBLIC = resolve(join(import.meta.dir, "..", "public"));
 
@@ -75,6 +75,8 @@ export type ServerOptions = {
   sessionRoots?: SessionRoots;
   projectsDir?: string;
   port?: number;
+  /** Test seam for the primary and legacy artifact libraries. */
+  artifactRoots?: string[];
   /** Test seam: shorten the heartbeat so a test need not wait whole seconds. */
   heartbeatMs?: number;
 };
@@ -120,6 +122,7 @@ export async function createServer(opts: ServerOptions = {}) {
   const sessionRoots = opts.sessionRoots ?? (opts.projectsDir ? null : defaultSessionRoots());
   const projectsDir = opts.sessionRoots?.claudeProjectsDir ?? opts.projectsDir ?? defaultProjectsDir();
   const heartbeatMs = opts.heartbeatMs ?? SSE_HEARTBEAT_MS;
+  const artifactRoots = () => opts.artifactRoots ?? defaultArtifactRoots();
   const clients = new Set<(sessionId: string) => void>();
 
   const server = bindWithFallback(async function fetch(req) {
@@ -152,7 +155,7 @@ export async function createServer(opts: ServerOptions = {}) {
       return json(await search(url.searchParams.get("q") ?? "", sessionInput));
     }
 
-    if (path === "/api/artifacts") return json(await listArtifacts());
+    if (path === "/api/artifacts") return json(await listArtifacts(artifactRoots()));
 
     if (path === "/events") {
       let send: ((sessionId: string) => void) | null = null;
@@ -230,17 +233,16 @@ export async function createServer(opts: ServerOptions = {}) {
     if (isAppRoute(path)) return htmlShell();
 
     // Artifact library: serves files written by the htmlview-artifact
-    // skill from artifactsDir() (~/.claude/htmlview/artifacts by default,
-    // overridable for tests). This is arbitrary-file-serving from a
+    // skill from the configured primary and legacy libraries. This is
+    // arbitrary-file-serving from a
     // user-writable directory -- the same symlink-escape shape the static
     // route below has to defend, so it gets the same three-step
     // treatment: decode before containment-checking (encoded
     // traversal survives literal-".." checks), lexically contain the
     // decoded target, then realpath()-contain the *resolved* target since
     // stat()/Bun.file() follow symlinks past the lexical check. Unlike
-    // PUBLIC, artifactsDir() is resolved per-request rather than cached at
-    // module load: it's overridable per-test via HTMLVIEW_ARTIFACTS_DIR
-    // and may not exist yet at server startup (no artifacts written).
+    // PUBLIC, artifact roots are resolved per-request: the environment seam
+    // may change in tests, and a library may not exist until its first write.
     if (path.startsWith("/artifact/")) {
       let decoded: string;
       try {
@@ -254,33 +256,33 @@ export async function createServer(opts: ServerOptions = {}) {
         return new Response("forbidden", { status: 403 });
       }
 
-      const dir = artifactsDir();
-      const target = resolve(dir, decoded);
-      if (target !== dir && !target.startsWith(dir + sep)) {
-        return new Response("forbidden", { status: 403 });
-      }
-
-      let realTarget: string;
-      try {
-        realTarget = await realpath(target);
-      } catch {
-        // Missing file, or a broken/dangling symlink -- 404 either way.
-        return new Response("not found", { status: 404 });
-      }
-      const realDir = await realpath(dir).catch(() => dir);
-      if (realTarget !== realDir && !realTarget.startsWith(realDir + sep)) {
-        return new Response("forbidden", { status: 403 });
-      }
-
-      try {
-        const st = await stat(realTarget);
-        if (st.isFile()) {
-          return new Response(Bun.file(realTarget), {
-            headers: { "content-type": "text/html; charset=utf-8" },
-          });
+      for (const dir of artifactRoots()) {
+        const target = resolve(dir, decoded);
+        if (target !== dir && !target.startsWith(dir + sep)) {
+          return new Response("forbidden", { status: 403 });
         }
-      } catch {
-        // not found, or unreadable -- fall through to 404
+
+        let realTarget: string;
+        try {
+          realTarget = await realpath(target);
+        } catch {
+          continue; // absent from this root; try the next library
+        }
+        const realDir = await realpath(dir).catch(() => dir);
+        if (realTarget !== realDir && !realTarget.startsWith(realDir + sep)) {
+          return new Response("forbidden", { status: 403 });
+        }
+
+        try {
+          const st = await stat(realTarget);
+          if (st.isFile()) {
+            return new Response(Bun.file(realTarget), {
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+        } catch {
+          continue;
+        }
       }
       return new Response("not found", { status: 404 });
     }

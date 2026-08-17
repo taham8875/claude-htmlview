@@ -39,7 +39,7 @@ Two processes. No hook. Nothing installed into Claude Code's path.
    |  Browser tab    |  marked.js -> HTML, dir="auto", collapsed tools
    +-----------------+
 
-~/.claude/htmlview/artifacts/<project>/   <- Claude writes standalone HTML here
+~/.local/share/claude-htmlview/artifacts/<project>/ <- agents write standalone HTML here
             |                                (indexed by the same server)
             +- cross-linked with the turn that produced it
 ```
@@ -153,7 +153,9 @@ Six rules, applied client-side after `marked.js` parses. Rules 1–3 address ess
 
 **`/live` — redirects to the most recently modified session.** The route to keep pinned: always shows the current working session, with no session IDs to bookmark or hunt for.
 
-**`/artifacts` — Artifact library.** Indexed from `~/.claude/htmlview/artifacts/`.
+**`/artifacts` — Artifact library.** Indexed from the primary
+`~/.local/share/claude-htmlview/artifacts/` library and the legacy
+`~/.claude/htmlview/artifacts/` library.
 
 **`/search?q=` — Full-text search across every session.** In v1, not deferred: with 146 sessions an mtime-sorted index is not sufficient to *find* anything, because recall is by content ("the session where I fixed the docmost import"), not by date.
 
@@ -199,7 +201,7 @@ At 149MB of transcripts these are correctness requirements, not optimizations:
 
 ## Artifact library
 
-**Location:** `~/.claude/htmlview/artifacts/<project>/<timestamp>-<slug>.html`, self-contained standalone HTML.
+**Location:** `~/.local/share/claude-htmlview/artifacts/<project>/<timestamp>-<slug>.html`, self-contained standalone HTML. The viewer also reads the legacy `~/.claude/htmlview/artifacts` location.
 
 Central rather than in-repo, so artifacts never pollute a git tree or leak into a commit.
 

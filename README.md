@@ -63,16 +63,16 @@ activity" pill instead of yanking you to the bottom.
 
 ## Configuration
 
-Reads `~/.claude/projects` and `~/.codex/sessions` **read-only**. All writes go under
-`~/.claude/htmlview/`, split across two independently overridable directories —
-useful for pointing either at a different location, or isolating them in tests:
+Reads `~/.claude/projects` and `~/.codex/sessions` **read-only**. Runtime writes
+are split across two independently overridable directories, useful for pointing
+either at a different location or isolating them in tests:
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `HTMLVIEW_CLAUDE_PROJECTS_DIR` | Claude Code transcript source | `~/.claude/projects` |
 | `HTMLVIEW_CODEX_SESSIONS_DIR` | Codex transcript source | `~/.codex/sessions` |
 | `HTMLVIEW_CACHE_DIR` | Derived full-text search cache | `~/.claude/htmlview/cache` |
-| `HTMLVIEW_ARTIFACTS_DIR` | Artifact library | `~/.claude/htmlview/artifacts` |
+| `HTMLVIEW_ARTIFACTS_DIR` | Artifact library | `~/.local/share/claude-htmlview/artifacts` |
 
 The search cache is derived data — deleting it only costs one re-index.
 
@@ -81,7 +81,7 @@ The search cache is derived data — deleting it only costs one re-index.
 Artifacts are self-contained HTML pages written to:
 
 ```
-~/.claude/htmlview/artifacts/<encoded-project>/<YYYY-MM-DD-HHmm>-<slug>.html
+~/.local/share/claude-htmlview/artifacts/<encoded-project>/<YYYY-MM-DD-HHmm>-<slug>.html
 ```
 
 `<encoded-project>` is the working directory with `/` replaced by `-`, matching
@@ -99,8 +99,10 @@ mkdir -p ~/.agents/skills
 cp -r skills/htmlview-artifact ~/.agents/skills/
 ```
 
-Both copies write to the same library. Set `HTMLVIEW_ARTIFACTS_DIR` in the
-agent environment if you use a custom artifact location.
+Both copies write to the same library. The viewer continues to list and serve
+artifacts from the legacy `~/.claude/htmlview/artifacts` directory, while new
+artifacts use the provider-neutral location. Set `HTMLVIEW_ARTIFACTS_DIR` in
+the agent environment to use one explicit custom location instead.
 
 ## Security
 
