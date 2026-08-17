@@ -42,6 +42,7 @@ test("ignores harness records, duplicate event mirrors, and encrypted reasoning"
   expect(serialized).not.toContain("hidden harness context");
   expect(serialized).not.toContain("hidden environment");
   expect(serialized).not.toContain("hidden skills");
+  expect(serialized).not.toContain("hidden selected skill");
   expect(serialized).not.toContain("duplicate mirror");
   expect(serialized).not.toContain("opaque");
   expect(serialized).not.toContain("SECRET");

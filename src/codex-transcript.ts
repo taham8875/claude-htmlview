@@ -8,6 +8,7 @@ export type CodexParsed = Parsed & {
 
 const INJECTED_USER_PREFIXES = [
   "# AGENTS.md instructions",
+  "<skill>",
   "<skills_instructions>",
   "<environment_context>",
 ];
