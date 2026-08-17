@@ -56,6 +56,22 @@ function toolOutput(output: unknown): string {
   }
 }
 
+function containsSkillDocument(value: unknown): boolean {
+  if (typeof value === "string") return /(?:^|\n)---\r?\nname:\s*\S/im.test(value);
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value as Record<string, unknown>).some(containsSkillDocument);
+}
+
+function isSkillDocumentRead(input: unknown, output: unknown): boolean {
+  let serializedInput: string;
+  try {
+    serializedInput = typeof input === "string" ? input : JSON.stringify(input);
+  } catch {
+    return false;
+  }
+  return /(?:^|[\\/])SKILL\.md\b/i.test(serializedInput) && containsSkillDocument(output);
+}
+
 function isSubagentMeta(payload: Record<string, unknown>): boolean {
   if (typeof payload.forked_from_id === "string") return true;
   if (!payload.source || typeof payload.source !== "object") return false;
@@ -152,7 +168,10 @@ export function parseCodexTranscript(jsonl: string): CodexParsed {
     if (itemType === "function_call_output" || itemType === "custom_tool_call_output") {
       if (typeof item.call_id === "string") {
         const tool = pendingTools.get(item.call_id);
-        if (tool) tool.result = toolOutput(item.output);
+        if (tool) {
+          const output = toolOutput(item.output);
+          tool.result = isSkillDocumentRead(tool.input, item.output) ? null : output;
+        }
       }
       continue;
     }

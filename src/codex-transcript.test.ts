@@ -62,3 +62,40 @@ test("identifies Codex subagent rollouts from session metadata", async () => {
   expect((await load("codex-edge")).isSubagent).toBe(true);
   expect((await load("codex-basic")).isSubagent).toBe(false);
 });
+
+test("keeps skill reads visible without exposing the skill document", () => {
+  const parsed = parseCodexTranscript([
+    JSON.stringify({
+      timestamp: "2026-08-17T12:00:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call",
+        name: "exec",
+        input: 'await tools.exec_command({ cmd: "sed -n 1,240p /skills/example/SKILL.md" })',
+        call_id: "skill-read",
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-08-17T12:00:01.000Z",
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "skill-read",
+        output: [
+          { type: "input_text", text: "Script completed" },
+          {
+            type: "input_text",
+            text: "---\nname: example\ndescription: hidden\n---\n# Example Skill\nSecret workflow",
+          },
+        ],
+      },
+    }),
+  ].join("\n"));
+
+  expect(parsed.turns[0]!.blocks).toHaveLength(1);
+  expect(parsed.turns[0]!.blocks[0]).toMatchObject({
+    kind: "tool",
+    name: "exec",
+    result: null,
+  });
+});
