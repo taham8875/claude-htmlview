@@ -39,6 +39,9 @@ test("ignores harness records, duplicate event mirrors, and encrypted reasoning"
   const serialized = JSON.stringify(parsed);
 
   expect(serialized).not.toContain("hidden project instructions");
+  expect(serialized).not.toContain("hidden harness context");
+  expect(serialized).not.toContain("hidden environment");
+  expect(serialized).not.toContain("hidden skills");
   expect(serialized).not.toContain("duplicate mirror");
   expect(serialized).not.toContain("opaque");
   expect(serialized).not.toContain("SECRET");

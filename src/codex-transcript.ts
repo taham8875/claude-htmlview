@@ -6,6 +6,17 @@ export type CodexParsed = Parsed & {
   isSubagent: boolean;
 };
 
+const INJECTED_USER_PREFIXES = [
+  "# AGENTS.md instructions",
+  "<skills_instructions>",
+  "<environment_context>",
+];
+
+function isInjectedUserContext(text: string): boolean {
+  const start = text.trimStart();
+  return INJECTED_USER_PREFIXES.some((prefix) => start.startsWith(prefix));
+}
+
 function textContent(content: unknown, type: "input_text" | "output_text"): string {
   if (!Array.isArray(content)) return "";
   return content
@@ -107,6 +118,7 @@ export function parseCodexTranscript(jsonl: string): CodexParsed {
     if (itemType === "message") {
       if (item.role === "user") {
         const text = textContent(item.content, "input_text");
+        if (isInjectedUserContext(text)) continue;
         const turn = startTurn(text, typeof entry.timestamp === "string" ? entry.timestamp : null);
         if (Array.isArray(item.content)) {
           for (const block of item.content) {

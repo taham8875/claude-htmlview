@@ -1,5 +1,8 @@
 {"timestamp":"2026-08-17T10:00:00.000Z","type":"session_meta","payload":{"id":"019a1111-2222-7333-8444-555566667777","timestamp":"2026-08-17T10:00:00.000Z","cwd":"/home/taha/github/demo","originator":"codex-tui","source":"cli"}}
 {"timestamp":"2026-08-17T10:00:00.100Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden project instructions"}]}}
+{"timestamp":"2026-08-17T10:00:00.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhidden harness context\n</INSTRUCTIONS>\n<environment_context>hidden environment</environment_context>"}]}}
+{"timestamp":"2026-08-17T10:00:00.300Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skills_instructions>hidden skills</skills_instructions>"}]}}
+{"timestamp":"2026-08-17T10:00:00.400Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>hidden standalone environment</environment_context>"}]}}
 {"timestamp":"2026-08-17T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the Codex transcript"},{"type":"input_image","image_url":"data:image/png;base64,SECRET"}]}}
 {"timestamp":"2026-08-17T10:00:01.001Z","type":"event_msg","payload":{"type":"user_message","message":"Check the Codex transcript"}}
 {"timestamp":"2026-08-17T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I will inspect it."}]}}
