@@ -193,8 +193,8 @@ test("merges Claude and Codex sessions while excluding Codex subagents", async (
   ]);
   expect(sessions.map((session) => session.provider)).toEqual(["codex", "claude"]);
   expect(sessions[0]).toMatchObject({
-    project: "~/github/demo",
-    projectPath: `${HOME_ENC}-github-demo`,
+    project: "/workspace/demo",
+    projectPath: "-workspace-demo",
     title: "Check the Codex transcript",
   });
 });
@@ -204,7 +204,7 @@ test("findSession dispatches provider-qualified Codex IDs", async () => {
   const found = await findSession("codex-019a1111-2222-7333-8444-555566667777", roots);
 
   expect(found?.meta.provider).toBe("codex");
-  expect(found?.meta.project).toBe("~/github/demo");
+  expect(found?.meta.project).toBe("/workspace/demo");
   expect(found?.turns).toHaveLength(2);
   expect(await findSession("codex-../../../etc/passwd", roots)).toBeNull();
   expect(await findSession("codex-019a9999-8888-7777-8666-555544443333", roots)).toBeNull();

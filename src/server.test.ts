@@ -86,7 +86,7 @@ test("session routes include Codex when both provider roots are configured", asy
     await fetch(`${base}/api/session/codex-019a1111-2222-7333-8444-555566667777`)
   ).json();
   expect(session.turns).toHaveLength(2);
-  expect(session.meta.project).toBe("~/github/demo");
+  expect(session.meta.project).toBe("/workspace/demo");
   server.stop();
 });
 

@@ -8,7 +8,7 @@ test("normalizes Codex messages, tools, and images into turns", async () => {
   const parsed = await load("codex-basic");
 
   expect(parsed.id).toBe("019a1111-2222-7333-8444-555566667777");
-  expect(parsed.cwd).toBe("/home/taha/github/demo");
+  expect(parsed.cwd).toBe("/workspace/demo");
   expect(parsed.title).toBe("Check the Codex transcript");
   expect(parsed.turns).toHaveLength(2);
   expect(parsed.turns[0]!.userText).toBe("Check the Codex transcript");
@@ -25,7 +25,7 @@ test("normalizes Codex messages, tools, and images into turns", async () => {
   expect(tools[0]).toMatchObject({
     name: "exec_command",
     input: { cmd: "pwd" },
-    result: "/home/taha/github/demo",
+    result: "/workspace/demo",
   });
   expect(tools[1]).toMatchObject({
     name: "apply_patch",
